@@ -684,37 +684,39 @@ scheduledTimerWithTimeInterval:timerIntvl
 	DYImageInfo *info = [imgCache infoForKey:resolvedPath];
 	
 	if (!info || info->pixelSize.height == 0) {
-		// Lightweight: just get raw dimensions + orientation, no scaling.
+		// Metadata-only: read pixel dimensions + orientation from
+		// image file header. No image decode — near-instantaneous.
 		CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:resolvedPath], NULL);
 		if (src) {
+			double ar = 0;
 			unsigned short orientation = 1;
 			CFDictionaryRef props = CGImageSourceCopyPropertiesAtIndex(src, 0, NULL);
 			if (props) {
+				CFNumberRef wRef = CFDictionaryGetValue(props, kCGImagePropertyPixelWidth);
+				CFNumberRef hRef = CFDictionaryGetValue(props, kCGImagePropertyPixelHeight);
+				if (wRef && hRef) {
+					double w = 0, h = 0;
+					CFNumberGetValue(wRef, kCFNumberDoubleType, &w);
+					CFNumberGetValue(hRef, kCFNumberDoubleType, &h);
+					if (h > 0) ar = w / h;
+				}
 				CFNumberRef nRef = CFDictionaryGetValue(props, kCGImagePropertyOrientation);
 				if (nRef) CFNumberGetValue(nRef, kCFNumberShortType, &orientation);
 				CFRelease(props);
 			}
-			CGImageRef img = CGImageSourceCreateImageAtIndex(src, 0,
-				(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGImageSourceShouldCacheImmediately:@NO});
-			if (img) {
-				double w = CGImageGetWidth(img), h = CGImageGetHeight(img);
-				if (h > 0) {
-					double ar = w / h;
-					NSNumber *rot = rotations[file];
-					if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
-						ar = 1.0 / ar;
-					} else if (autoRotate && !rot && orientation > 1) {
-						int r; BOOL f;
-						exiforientation_to_components(orientation, &r, &f);
-						if (r == 90 || r == 270 || r == -90) ar = 1.0 / ar;
-					}
-					CFRelease(img);
-					CFRelease(src);
-					return ar;
-				}
-				CFRelease(img);
-			}
 			CFRelease(src);
+			if (ar > 0) {
+				NSNumber *rot = rotations[file];
+				if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
+					return 1.0 / ar;
+				}
+				if (autoRotate && !rot && orientation > 1) {
+					int r; BOOL f;
+					exiforientation_to_components(orientation, &r, &f);
+					if (r == 90 || r == 270 || r == -90) return 1.0 / ar;
+				}
+				return ar;
+			}
 		}
 	} else {
 		double ar = info->pixelSize.width / info->pixelSize.height;

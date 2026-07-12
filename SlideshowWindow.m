@@ -83,7 +83,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	BOOL timerPaused;
 	NSTimer *autoTimer;
 	
-	NSMutableDictionary *rotations, *zooms, *flips;
+	NSMutableDictionary *rotations, *zooms, *flips, *aspectCache;
 	
 	NSString *basePath;
 	NSSize _oldBackingSize;
@@ -127,6 +127,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 		rotations = [[NSMutableDictionary alloc] init];
 		flips = [[NSMutableDictionary alloc] init];
 		zooms = [[NSMutableDictionary alloc] init];
+		aspectCache = [[NSMutableDictionary alloc] init];
 		imgCache = [[DYImageCache alloc] initWithCapacity:MAX_CACHED];
 		imgCache.fallbackImage = [NSImage imageNamed:@"brokendoc.tif"];
 		_upcomingQueue = [[NSOperationQueue alloc] init];
@@ -236,6 +237,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	autoRotate = b;
 	[rotations removeAllObjects];
 	[flips removeAllObjects];
+	[aspectCache removeAllObjects];
 	if (currentIndex != NSNotFound) {
 		[self displayImage];
 	}
@@ -259,6 +261,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 - (void)setFilenames:(NSArray *)files basePath:(NSString *)s comparator:(NSComparator)block sortOrder:(short int)sortOrder {
 	if (currentIndex != NSNotFound)
 		[self cleanUp];
+	[aspectCache removeAllObjects];
 	
 	if (s != basePath) {
 		if ([s characterAtIndex:s.length-1] != '/')
@@ -680,12 +683,14 @@ scheduledTimerWithTimeInterval:timerIntvl
 }
 
 - (double)fastAspectRatioForFile:(NSString *)file {
+	NSNumber *cached = aspectCache[file];
+	if (cached) return cached.doubleValue;
+	
 	NSString *resolvedPath = ResolveAliasToPath(file);
 	DYImageInfo *info = [imgCache infoForKey:resolvedPath];
+	double result = 0;
 	
 	if (!info || info->pixelSize.height == 0) {
-		// Metadata-only: read pixel dimensions + orientation from
-		// image file header. No image decode — near-instantaneous.
 		CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:resolvedPath], NULL);
 		if (src) {
 			double ar = 0;
@@ -708,28 +713,33 @@ scheduledTimerWithTimeInterval:timerIntvl
 			if (ar > 0) {
 				NSNumber *rot = rotations[file];
 				if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
-					return 1.0 / ar;
-				}
-				if (autoRotate && !rot && orientation > 1) {
+					result = 1.0 / ar;
+				} else if (autoRotate && !rot && orientation > 1) {
 					int r; BOOL f;
 					exiforientation_to_components(orientation, &r, &f);
-					if (r == 90 || r == 270 || r == -90) return 1.0 / ar;
+					result = (r == 90 || r == 270 || r == -90) ? 1.0 / ar : ar;
+				} else {
+					result = ar;
 				}
-				return ar;
 			}
 		}
 	} else {
 		double ar = info->pixelSize.width / info->pixelSize.height;
 		NSNumber *rot = rotations[file];
 		if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
-			return 1.0 / ar;
-		}
-		if (autoRotate && !rot && info->exifOrientation > 1) {
+			result = 1.0 / ar;
+		} else if (autoRotate && !rot && info->exifOrientation > 1) {
 			int r; BOOL f;
 			exiforientation_to_components(info->exifOrientation, &r, &f);
-			if (r == 90 || r == 270 || r == -90) return 1.0 / ar;
+			result = (r == 90 || r == 270 || r == -90) ? 1.0 / ar : ar;
+		} else {
+			result = ar;
 		}
-		return ar;
+	}
+	
+	if (result > 0) {
+		aspectCache[file] = @(result);
+		return result;
 	}
 	
 	@throw [NSException exceptionWithName:@"ArExtractException" reason:[NSString stringWithFormat:@"Impossible d'extraire l'aspect ratio pour le fichier: %@", resolvedPath] userInfo:nil];

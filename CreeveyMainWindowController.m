@@ -248,8 +248,37 @@ typedef struct {
 	_brokenDoc = [NSImage imageNamed:@"brokendoc.tif"];
 	_loadingImage = [NSImage imageNamed:@"loading.png"];
 	imgMatrix.loadingImage = _loadingImage;
+	
+	NSPopUpButton *mosaicPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+	[mosaicPopup addItemsWithTitles:@[@"1", @"2", @"3", @"4", @"5", @"6", @"7", @"8"]];
+	mosaicPopup.target = self;
+	mosaicPopup.action = @selector(mosaicCountChanged:);
+	NSInteger savedMosaic = [u integerForKey:@"SlideshowMosaicCount"];
+	if (savedMosaic >= 1 && savedMosaic <= 8) {
+		[mosaicPopup selectItemAtIndex:savedMosaic - 1];
+	}
+	[self.slidesBtn.superview addSubview:mosaicPopup];
+	
+	// Shift slidesBtn left by modifying its trailing constraint
+	for (NSLayoutConstraint *c in self.slidesBtn.superview.constraints) {
+		if (c.firstItem == self.slidesBtn && c.firstAttribute == NSLayoutAttributeTrailing) {
+			c.constant -= 60;
+		} else if (c.secondItem == self.slidesBtn && c.secondAttribute == NSLayoutAttributeTrailing) {
+			c.constant += 60;
+		}
+	}
+	
+	// Pin mosaicPopup to the right of slidesBtn
+	mosaicPopup.translatesAutoresizingMaskIntoConstraints = NO;
+	[mosaicPopup.leadingAnchor constraintEqualToAnchor:self.slidesBtn.trailingAnchor constant:8].active = YES;
+	[mosaicPopup.centerYAnchor constraintEqualToAnchor:self.slidesBtn.centerYAnchor].active = YES;
+	
 	[NSThread detachNewThreadSelector:@selector(thumbLoader:) toTarget:self withObject:nil];
 	[NSUserDefaultsController.sharedUserDefaultsController addObserver:self forKeyPath:@"values.DYWrappingMatrixMaxCellWidth" options:0 context:NULL];
+}
+
+- (void)mosaicCountChanged:(NSPopUpButton *)sender {
+	[NSUserDefaults.standardUserDefaults setInteger:sender.indexOfSelectedItem + 1 forKey:@"SlideshowMosaicCount"];
 }
 
 - (void)dealloc {

@@ -44,6 +44,12 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	r.size.height -= _notchHeight;
 	return r;
 }
+
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+	if ([self.window respondsToSelector:@selector(layoutMosaic)]) {
+		[self.window performSelector:@selector(layoutMosaic)];
+	}
+}
 @end
 
 
@@ -61,12 +67,14 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 // cat methods
 - (void)displayCats;
 - (void)assignCat:(short int)n toggle:(BOOL)toggle;
+- (void)layoutMosaic;
 @end
 
 @implementation SlideshowWindow
 {
 	NSMutableSet * __strong *cats;
 	DYImageView *imgView;
+	NSMutableArray<DYImageView *> *mosaicViews;
 	NSTextField *infoFld, *catsFld; BOOL hideInfoFld, moreExif;
 	NSTextView *exifFld;
 	
@@ -105,7 +113,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 															@"DYSlideshowWindowVisiblePath": @NO}];
 }
 
-#define MAX_CACHED 15
+#define MAX_CACHED 30
 // MAX_CACHED must be bigger than the number of items you plan to have cached!
 #define MAX_REPEATING_CACHED 6
 // when key is held down, max to cache before skipping over
@@ -138,6 +146,8 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 - (void)awakeFromNib {
 	self.contentView = [[DYSlideshowContentView alloc] initWithFrame:NSZeroRect];
 	imgView = [[DYImageView alloc] initWithFrame:NSZeroRect];
+	mosaicViews = [NSMutableArray arrayWithObject:imgView];
+	_mosaicCount = 1;
 	[self.contentView addSubview:imgView];
 	imgView.frame = self.contentView.frame;
 	imgView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -145,14 +155,14 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	imgView.delegate = self;
 	
 	infoFld = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,360,20)];
-	[imgView addSubview:infoFld];
+	[self.contentView addSubview:infoFld];
 	infoFld.autoresizingMask = NSViewMaxXMargin|NSViewMaxYMargin;
 	infoFld.backgroundColor = NSColor.grayColor;
 	infoFld.bezeled = NO;
 	infoFld.editable = NO;
 	
 	catsFld = [[NSTextField alloc] initWithFrame:NSMakeRect(0,imgView.bounds.size.height-20,300,20)];
-	[imgView addSubview:catsFld];
+	[self.contentView addSubview:catsFld];
 	catsFld.autoresizingMask = NSViewMaxXMargin|NSViewMinYMargin;
 	catsFld.backgroundColor = NSColor.grayColor;
 	catsFld.bezeled = NO;
@@ -161,7 +171,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	
 	NSSize s = imgView.bounds.size;
 	NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(s.width-360,0,360,s.height-20)];
-	[imgView addSubview:sv];
+	[self.contentView addSubview:sv];
 	sv.autoresizingMask = NSViewHeightSizable | NSViewMinXMargin;
 	
 	exifFld = [[NSTextView alloc] initWithFrame:NSMakeRect(0,0,sv.contentSize.width,20)];
@@ -305,7 +315,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 				notchHeight = myScreen.safeAreaInsets.top;
 		[self setFrame:screenRect display:NO];
 		contentView.notchHeight = notchHeight;
-		imgView.frame = contentView.imageRect;
+		[self layoutMosaic];
 	} else {
 		if (!self.visible) {
 			NSString *v = [NSUserDefaults.standardUserDefaults objectForKey:@"DYSlideshowWindowFrame"];
@@ -322,7 +332,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 			[self setFrame:r display:NO];
 		}
 		contentView.notchHeight = 0;
-		imgView.frame = contentView.imageRect;
+		[self layoutMosaic];
 	}
 }
 
@@ -669,6 +679,60 @@ scheduledTimerWithTimeInterval:timerIntvl
 		[self displayImage];
 }
 
+- (double)fastAspectRatioForFile:(NSString *)file {
+	NSString *resolvedPath = ResolveAliasToPath(file);
+	DYImageInfo *info = [imgCache infoForKey:resolvedPath];
+	
+	if (!info || info->pixelSize.height == 0) {
+		// Lightweight: just get raw dimensions + orientation, no scaling.
+		CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:resolvedPath], NULL);
+		if (src) {
+			unsigned short orientation = 1;
+			CFDictionaryRef props = CGImageSourceCopyPropertiesAtIndex(src, 0, NULL);
+			if (props) {
+				CFNumberRef nRef = CFDictionaryGetValue(props, kCGImagePropertyOrientation);
+				if (nRef) CFNumberGetValue(nRef, kCFNumberShortType, &orientation);
+				CFRelease(props);
+			}
+			CGImageRef img = CGImageSourceCreateImageAtIndex(src, 0,
+				(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGImageSourceShouldCacheImmediately:@NO});
+			if (img) {
+				double w = CGImageGetWidth(img), h = CGImageGetHeight(img);
+				if (h > 0) {
+					double ar = w / h;
+					NSNumber *rot = rotations[file];
+					if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
+						ar = 1.0 / ar;
+					} else if (autoRotate && !rot && orientation > 1) {
+						int r; BOOL f;
+						exiforientation_to_components(orientation, &r, &f);
+						if (r == 90 || r == 270 || r == -90) ar = 1.0 / ar;
+					}
+					CFRelease(img);
+					CFRelease(src);
+					return ar;
+				}
+				CFRelease(img);
+			}
+			CFRelease(src);
+		}
+	} else {
+		double ar = info->pixelSize.width / info->pixelSize.height;
+		NSNumber *rot = rotations[file];
+		if (rot && (rot.intValue == 90 || rot.intValue == 270 || rot.intValue == -90)) {
+			return 1.0 / ar;
+		}
+		if (autoRotate && !rot && info->exifOrientation > 1) {
+			int r; BOOL f;
+			exiforientation_to_components(info->exifOrientation, &r, &f);
+			if (r == 90 || r == 270 || r == -90) return 1.0 / ar;
+		}
+		return ar;
+	}
+	
+	@throw [NSException exceptionWithName:@"ArExtractException" reason:[NSString stringWithFormat:@"Impossible d'extraire l'aspect ratio pour le fichier: %@", resolvedPath] userInfo:nil];
+}
+
 - (void)displayImage {
 	if (currentIndex == NSNotFound) return; // in case called after slideshow ended
 									// not necessary if s/isActive/isKeyWindow/
@@ -678,55 +742,98 @@ scheduledTimerWithTimeInterval:timerIntvl
 		infoFld.stringValue = NSLocalizedString(@"End of slideshow (last file was deleted)", @"");
 		[infoFld sizeToFit];
 		exifFld.string = @"";
-		imgView.image = nil;
+		for (DYImageView *v in mosaicViews) v.image = nil;
 		self.title = NSProcessInfo.processInfo.processName;
 		return;
 	}
-	NSString *theFile = filenames[currentIndex];
-	NSString *resolvedPath = ResolveAliasToPath(theFile);
-	[self setTitleWithRepresentedFilename:theFile];
-	NSImage *img = [self loadFromCache:resolvedPath];
-	[self displayCats];
-	if (img) {
-		NSNumber *rot = rotations[theFile];
-		DYImageViewZoomInfo *zoomInfo = zooms[theFile];
-		int r = rot ? rot.intValue : 0;
-		BOOL imgFlipped = [flips[theFile] boolValue];
-		
-		if (hideInfoFld) infoFld.hidden = YES; // this must happen before setImage, for redraw purposes
-		imgView.preferWhiteBackground = IsNotCGImage(resolvedPath.pathExtension.lowercaseString);
-		DYImageInfo *info = [imgCache infoForKey:resolvedPath];
-		if (autoRotate && !rot && !imgFlipped && info->exifOrientation > 1) {
-			// auto-rotate by exif orientation
-			exiforientation_to_components(info->exifOrientation, &r, &imgFlipped);
-			rotations[theFile] = @(r);
-			flips[theFile] = @(imgFlipped);
-		}
-		[self resizeWindowToFit];
-		if ((zoomInfo || imgView.showActualSize) && !info.hasFullSizeImage)
-			[self loadFullSizeImage];
-		else if (info->quality == DYImageQualityLow)
-			[self loadNicerImage];
-		[imgView setImage:img withSize:info->pixelSize rotated:r flipped:imgFlipped zoomInfo:zoomInfo];
-		if ([theFile.pathExtension.lowercaseString isEqualToString:@"webp"]) {
-			// check for animated webp
-			CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:theFile isDirectory:NO], NULL);
-			if (src) {
-				if (CGImageSourceGetCount(src) > 1)
-					imgView.webpImageSource = CFBridgingRelease(src);
-				else
-					CFRelease(src);
+	
+	if (randomMode && _mosaicCount > 1 && currentIndex < filenames.count) {
+		static NSUInteger lastClusteredIndex = NSNotFound;
+		if (currentIndex != lastClusteredIndex) {
+			lastClusteredIndex = currentIndex;
+			double targetAR = [self fastAspectRatioForFile:filenames[currentIndex]];
+			for (NSUInteger m = 1; m < _mosaicCount; m++) {
+				NSUInteger slot = currentIndex + m;
+				if (slot >= filenames.count) break;
+				
+				NSUInteger bestIdx = slot;
+				double bestDiff = INFINITY;
+				NSUInteger searchEnd = MIN(filenames.count, slot + 50);
+				for (NSUInteger k = slot; k < searchEnd; k++) {
+					double ar = [self fastAspectRatioForFile:filenames[k]];
+					double diff = fabs(ar - targetAR);
+					if (diff < bestDiff) {
+						bestDiff = diff;
+						bestIdx = k;
+						if (diff < 0.05) break; // good enough
+					}
+				}
+				if (bestIdx != slot) {
+					[filenames exchangeObjectAtIndex:slot withObjectAtIndex:bestIdx];
+				}
 			}
 		}
-		[self updateInfoFld];
-		if (!exifFld.enclosingScrollView.hidden) [self updateExifFld];
-		if (timerIntvl) [self runTimer];
-	} else {
-		if (hideInfoFld) infoFld.hidden = NO;
-		infoFld.stringValue = [NSString stringWithFormat:NSLocalizedString(@"Loading [%i/%i] %@...", @""),
-			(unsigned int)currentIndex+1, (unsigned int)filenames.count, [self currentShortFilename]];
-		[infoFld sizeToFit];
-		return;
+	}
+	
+	[self layoutMosaic];
+
+for (NSUInteger m = 0; m < _mosaicCount; m++) {
+	NSUInteger idx = currentIndex + m;
+	if (idx >= filenames.count) {
+		if (m < mosaicViews.count) mosaicViews[m].image = nil;
+		continue;
+	}
+		NSString *theFile = filenames[idx];
+		NSString *resolvedPath = ResolveAliasToPath(theFile);
+		if (m == 0) [self setTitleWithRepresentedFilename:theFile];
+		NSImage *img = [self loadFromCache:resolvedPath];
+		if (m == 0) [self displayCats];
+		if (img && m < mosaicViews.count) {
+			DYImageView *v = mosaicViews[m];
+			NSNumber *rot = rotations[theFile];
+			DYImageViewZoomInfo *zoomInfo = zooms[theFile];
+			int r = rot ? rot.intValue : 0;
+			BOOL imgFlipped = [flips[theFile] boolValue];
+			
+			if (m == 0 && hideInfoFld) infoFld.hidden = YES; // this must happen before setImage, for redraw purposes
+			v.preferWhiteBackground = IsNotCGImage(resolvedPath.pathExtension.lowercaseString);
+			DYImageInfo *info = [imgCache infoForKey:resolvedPath];
+			if (autoRotate && !rot && !imgFlipped && info->exifOrientation > 1) {
+				// auto-rotate by exif orientation
+				exiforientation_to_components(info->exifOrientation, &r, &imgFlipped);
+				rotations[theFile] = @(r);
+				flips[theFile] = @(imgFlipped);
+			}
+			if (m == 0) [self resizeWindowToFit];
+			if (m == 0) {
+				if ((zoomInfo || v.showActualSize) && !info.hasFullSizeImage)
+					[self loadFullSizeImage];
+				else if (info->quality == DYImageQualityLow)
+					[self loadNicerImage];
+			}
+			[v setImage:img withSize:info->pixelSize rotated:r flipped:imgFlipped zoomInfo:zoomInfo];
+			if ([theFile.pathExtension.lowercaseString isEqualToString:@"webp"]) {
+				// check for animated webp
+				CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:theFile isDirectory:NO], NULL);
+				if (src) {
+					if (CGImageSourceGetCount(src) > 1)
+						v.webpImageSource = CFBridgingRelease(src);
+					else
+						CFRelease(src);
+				}
+			}
+			if (m == 0) {
+				[self updateInfoFld];
+				if (!exifFld.enclosingScrollView.hidden) [self updateExifFld];
+				if (timerIntvl) [self runTimer];
+			}
+		} else if (m == 0) {
+			if (hideInfoFld) infoFld.hidden = NO;
+			infoFld.stringValue = [NSString stringWithFormat:NSLocalizedString(@"Loading [%i/%i] %@...", @""),
+				(unsigned int)idx+1, (unsigned int)filenames.count, [self currentShortFilename]];
+			[infoFld sizeToFit];
+			mosaicViews[0].image = nil;
+		}
 	}
 	if (keyIsRepeating) return; // don't bother precaching if we're fast-forwarding anyway
 
@@ -734,11 +841,11 @@ scheduledTimerWithTimeInterval:timerIntvl
 		[NSCursor setHiddenUntilMouseMoves:YES];
 
 	DYImageQuality q = imgView.showActualSize ? DYImageQualityFull : DYImageQualityHigh;
-	for (short i=1; i<=2; i++) {
-		if (currentIndex+i >= filenames.count)
+	[_upcomingQueue cancelAllOperations];
+	for (short i=0; i<MAX(2, _mosaicCount); i++) {
+		if (currentIndex + _mosaicCount + i >= filenames.count)
 			break;
-		NSString *aPath = ResolveAliasToPath(filenames[currentIndex+i]);
-		[_upcomingQueue cancelAllOperations];
+		NSString *aPath = ResolveAliasToPath(filenames[currentIndex + _mosaicCount + i]);
 		[_upcomingQueue addOperationWithBlock:^{
 			[imgCache cacheFile:aPath fullSize:q];
 		}];
@@ -769,6 +876,7 @@ scheduledTimerWithTimeInterval:timerIntvl
 }
 
 - (void)jump:(NSInteger)n { // go forward n pics (negative numbers go backwards)
+	if (n == 1 || n == -1 || n == 10 || n == -10) n *= MAX(1, _mosaicCount);
 	if (n > 0)
 		timerPaused = NO; // going forward unpauses auto-advance
 	if ((n > 0 && currentIndex+1 >= filenames.count) || (n < 0 && currentIndex == 0)){
@@ -1148,6 +1256,15 @@ scheduledTimerWithTimeInterval:timerIntvl
 
 - (void)rightMouseDown:(NSEvent *)e {
 	[self jump:-1];
+}
+
+- (void)setMosaicCount:(NSInteger)n {
+	if (n < 1) n = 1;
+	if (n > 8) n = 8;
+	if (_mosaicCount == n) return;
+	_mosaicCount = n;
+	[self layoutMosaic];
+	[self displayImage];
 }
 
 - (void)sendEvent:(NSEvent *)e {
@@ -1533,8 +1650,124 @@ scheduledTimerWithTimeInterval:timerIntvl
 			[self updateStatusOnMainThread:^NSString *{
 				return [NSLocalizedString(@"No image files found: ", @"long filepath appended here") stringByAppendingString:path];
 			}];
-		}
-	}
+}
+}
 }
 
+- (void)layoutMosaic {
+	if (_mosaicCount < 1) {
+		imgView.frame = [(DYSlideshowContentView *)self.contentView imageRect];
+		imgView.hidden = NO;
+		for (NSUInteger i = 1; i < mosaicViews.count; i++) mosaicViews[i].hidden = YES;
+		return;
+	}
+	NSRect bounds = [(DYSlideshowContentView *)self.contentView imageRect];
+	if (bounds.size.width == 0 || bounds.size.height == 0) return;
+	
+	if (_mosaicCount > 1 && currentIndex < filenames.count) {
+		double targetAR = [self fastAspectRatioForFile:filenames[currentIndex]];
+		BOOL isTargetPortrait = (targetAR < 1.0);
+		
+		NSUInteger needed = _mosaicCount - 1;
+		NSUInteger lookAheadMax = MIN(filenames.count, currentIndex + 50);
+		NSUInteger insertPos = currentIndex + 1;
+		
+		for (NSUInteger searchPos = currentIndex + 1; searchPos < lookAheadMax && needed > 0; searchPos++) {
+			double testAR = [self fastAspectRatioForFile:filenames[searchPos]];
+			BOOL isTestPortrait = (testAR < 1.0);
+			if (isTestPortrait == isTargetPortrait) {
+				if (searchPos != insertPos) {
+					[filenames exchangeObjectAtIndex:insertPos withObjectAtIndex:searchPos];
+				}
+				insertPos++;
+				needed--;
+			}
+		}
+	}
+	
+	NSMutableArray *aspects = [NSMutableArray arrayWithCapacity:_mosaicCount];
+	for (NSUInteger i = 0; i < _mosaicCount; i++) {
+		double ar = 1.5;
+		NSUInteger idx = currentIndex + i;
+		if (idx < filenames.count) {
+			ar = [self fastAspectRatioForFile:filenames[idx]];
+		}
+		[aspects addObject:@(ar)];
+	}
+	double r = [[aspects firstObject] doubleValue];
+	double sum_r = 0;
+	for (NSNumber *ar in aspects) {
+		sum_r += [ar doubleValue];
+	}
+	if (_mosaicCount > 0) {
+		r = sum_r / _mosaicCount;
+	}
+
+	double W = bounds.size.width;
+	double H = bounds.size.height;
+	
+	int meilleuresColonnes = 1;
+	int meilleuresLignes = (int)_mosaicCount;
+	
+	double meilleureLargeur = 0.0;
+	double meilleureHauteur = 0.0;
+	double meilleureSurface = -1.0;
+	
+	for (int colonnes = 1; colonnes <= _mosaicCount; ++colonnes) {
+		int lignes = ((int)_mosaicCount + colonnes - 1) / colonnes;
+		
+		double hauteurImage = MIN(H / lignes, W / (colonnes * r));
+		double largeurImage = hauteurImage * r;
+		double surfaceImage = largeurImage * hauteurImage;
+		
+		if (surfaceImage > meilleureSurface) {
+			meilleureSurface = surfaceImage;
+			meilleuresColonnes = colonnes;
+			meilleuresLignes = lignes;
+			meilleureLargeur = largeurImage;
+			meilleureHauteur = hauteurImage;
+		}
+	}
+	
+	double hauteurTotale = meilleuresLignes * meilleureHauteur;
+	double yInitial = bounds.origin.y + (H - hauteurTotale) / 2.0;
+	
+	NSRect bestFrames[_mosaicCount];
+	
+	for (int ligne = 0; ligne < meilleuresLignes; ++ligne) {
+		int premierIndice = ligne * meilleuresColonnes;
+		int imagesRestantes = (int)_mosaicCount - premierIndice;
+		int imagesDansLaLigne = MIN(meilleuresColonnes, imagesRestantes);
+		
+		double largeurLigne = imagesDansLaLigne * meilleureLargeur;
+		double xInitial = bounds.origin.x + (W - largeurLigne) / 2.0;
+		
+		for (int colonne = 0; colonne < imagesDansLaLigne; ++colonne) {
+			int idx = premierIndice + colonne;
+			if (idx < _mosaicCount) {
+				double yPos = yInitial + (meilleuresLignes - 1 - ligne) * meilleureHauteur;
+				bestFrames[idx] = NSMakeRect(xInitial + colonne * meilleureLargeur,
+											 yPos,
+											 meilleureLargeur,
+											 meilleureHauteur);
+			}
+		}
+	}
+	
+	for (NSUInteger i = 0; i < _mosaicCount; i++) {
+		if (i >= mosaicViews.count) {
+			DYImageView *v = [[DYImageView alloc] initWithFrame:bestFrames[i]];
+			v.imageBackgroundColor = imgView.imageBackgroundColor;
+			[self.contentView addSubview:v positioned:NSWindowBelow relativeTo:nil];
+			[mosaicViews addObject:v];
+		}
+		DYImageView *v = mosaicViews[i];
+		v.hidden = NO;
+		v.frame = bestFrames[i];
+	}
+	
+	for (NSUInteger i = _mosaicCount; i < mosaicViews.count; i++) {
+		mosaicViews[i].hidden = YES;
+	}
+}
 @end

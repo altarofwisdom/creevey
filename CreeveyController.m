@@ -275,6 +275,9 @@ NSMutableAttributedString* Fileinfo2EXIFString(NSString *origPath, DYImageCache 
 
 - (void)startSlideshowFullscreen:(BOOL)flag withFiles:(nullable NSArray *)files {
 	slidesWindow.fullscreenMode = flag;
+	NSInteger mosaic = [NSUserDefaults.standardUserDefaults integerForKey:@"SlideshowMosaicCount"];
+	if (mosaic < 1) mosaic = 1;
+	slidesWindow.mosaicCount = mosaic;
 	BOOL wantsUpdates;
 	NSUInteger startIdx = NSNotFound;
 	if (files) {

@@ -138,6 +138,15 @@
 	[orderedToRandom removeAllObjects];
 }
 
+- (void)exchangeObjectAtIndex:(NSUInteger)idx1 withObjectAtIndex:(NSUInteger)idx2 {
+	[array exchangeObjectAtIndex:idx1 withObjectAtIndex:idx2];
+	if (orderedArray.count) {
+		[randomToOrdered exchangeObjectAtIndex:idx1 withObjectAtIndex:idx2];
+		orderedToRandom[randomToOrdered[idx1].unsignedIntegerValue] = @(idx1);
+		orderedToRandom[randomToOrdered[idx2].unsignedIntegerValue] = @(idx2);
+	}
+}
+
 - (void)randomize {
 	[self randomizeStartingWithObjectAtIndex:NSNotFound];
 }

@@ -22,6 +22,7 @@
 - (void)endSlideshow;
 - (void)resetScreen;
 
+@property (nonatomic) NSInteger mosaicCount;
 @property (nonatomic, readonly) NSUInteger currentIndex;
 @property (nonatomic, readonly) NSString *currentFile;
 @property (nonatomic, readonly) NSURL *baseURL;

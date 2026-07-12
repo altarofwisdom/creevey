@@ -25,6 +25,7 @@
 - (void)randomize;
 - (void)randomizeStartingWithObjectAtIndex:(NSUInteger)startIndex;
 - (void)derandomize;
+- (void)exchangeObjectAtIndex:(NSUInteger)idx1 withObjectAtIndex:(NSUInteger)idx2;
 
 - (NSUInteger)orderedIndexFromIndex:(NSUInteger)index;
 

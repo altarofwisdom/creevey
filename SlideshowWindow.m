@@ -12,6 +12,7 @@
 #import "DYImageView.h"
 #import "DYImageCache.h"
 #import "DYCarbonGoodies.h"
+#import "FastScanner.h"
 #import "CreeveyController.h"
 #import "DYRandomizableArray.h"
 #import "DYFileWatcher.h"
@@ -1623,18 +1624,23 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 		[self updateStatusOnMainThread:^NSString *{ return scanMsg; }];
 		NSMutableArray *files = [NSMutableArray array];
 		if (path && selectedFiles.count <= 1) {
-			NSUInteger i = 0;
-			id<NSFastEnumeration> e = CreeveyEnumerator(path, recurseSubfolders);
-			for (NSURL *url in e) {
-				@autoreleasepool {
-					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
-						continue;
-					if ([appDelegate shouldShowFile:url]) {
-						[files addObject:url.path];
-						if ((++i & 63) == 0) [self updateStatusOnMainThread:^NSString *{ return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, (unsigned long)i]; }];
-					}
-					if (_stopLoading)
-						return;
+			static char stopFlag;
+			stopFlag = 0;
+			// Use FastScanner with progress callback for real-time file counts
+			NSArray<NSURL *> *allURLs = [FastScanner scanDirectory:path
+														 recurse:recurseSubfolders
+											  revealedDirectories:appDelegate.revealedDirectories
+															 stop:&stopFlag
+														 progress:^(NSUInteger totalFound) {
+				[self updateStatusOnMainThread:^NSString *{
+					return [NSString stringWithFormat:@"%@ (%lu)", scanMsg, (unsigned long)totalFound];
+				}];
+			}];
+			if (stopFlag) return;
+			// Filter for image files (FastScanner returns all files)
+			for (NSURL *url in allURLs) {
+				if ([appDelegate shouldShowFile:url]) {
+					[files addObject:url.path];
 				}
 			}
 		} else {

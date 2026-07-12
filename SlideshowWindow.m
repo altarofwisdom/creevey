@@ -1614,11 +1614,16 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 		NSMutableArray *files = [NSMutableArray array];
 		if (path && selectedFiles.count <= 1) {
 			NSUInteger i = 0;
-			id<NSFastEnumeration> e = CreeveyEnumerator(path, recurseSubfolders);
+			// Use NSFileManager enumerator (incremental) instead of
+			// FastScanner (blocking) for real-time progress updates.
+			NSDirectoryEnumerationOptions opts = NSDirectoryEnumerationSkipsHiddenFiles | NSDirectoryEnumerationSkipsPackageDescendants;
+			if (!recurseSubfolders) opts |= NSDirectoryEnumerationSkipsSubdirectoryDescendants;
+			NSDirectoryEnumerator *e = [NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:path isDirectory:YES]
+												 includingPropertiesForKeys:@[NSURLIsDirectoryKey]
+																options:opts
+														   errorHandler:^BOOL(NSURL *url, NSError *error) { return YES; }];
 			for (NSURL *url in e) {
 				@autoreleasepool {
-					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
-						continue;
 					if ([appDelegate shouldShowFile:url]) {
 						[files addObject:url.path];
 						if ((++i & 63) == 0) [self updateStatusOnMainThread:^NSString *{ return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, (unsigned long)i]; }];

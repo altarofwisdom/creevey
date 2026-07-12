@@ -98,6 +98,12 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	unsigned char keyIsRepeating;
 	
 	BOOL mouseDragged;
+	BOOL _inDirectoryMode;
+	DYRandomizableArray<NSString *> *_savedFilenames;
+	NSString *_savedBasePath;
+	NSUInteger _savedIndex;
+	NSInteger _savedMosaicCount;
+	BOOL _savedRandomMode;
 
 	DYRandomizableArray<NSString *> *filenames;
 	NSOperationQueue *_upcomingQueue;
@@ -1251,12 +1257,71 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	if (!NSPointInRect(e.locationInWindow, self.contentView.frame))
 		return;
 	
-	mouseDragged = YES; // prevent the following mouseUp from advancing twice
-	    // this would happen if it was zoomed in
+	// In mosaic mode, check if a specific tile was clicked
+	if (!_inDirectoryMode && _mosaicCount > 1) {
+		NSPoint p = [self.contentView convertPoint:e.locationInWindow fromView:nil];
+		for (NSUInteger i = 0; i < _mosaicCount && i < mosaicViews.count; i++) {
+			DYImageView *v = mosaicViews[i];
+			if (!v.hidden && NSPointInRect(p, v.frame)) {
+				NSUInteger idx = currentIndex + i;
+				if (idx < filenames.count) {
+					[self enterDirectoryMode:filenames[idx]];
+					return;
+				}
+			}
+		}
+	}
+	
+	mouseDragged = YES;
 	if (e.clickCount == 1)
 		[self jump:1];
 	else if (e.clickCount == 2)
 		[self endSlideshow];
+}
+
+- (void)enterDirectoryMode:(NSString *)file {
+	// Save current state
+	_savedFilenames = filenames;
+	_savedIndex = currentIndex;
+	_savedBasePath = basePath;
+	_savedMosaicCount = _mosaicCount;
+	_savedRandomMode = randomMode;
+	
+	// Filter to only files in the same directory
+	NSString *dir = [file stringByDeletingLastPathComponent];
+	NSMutableArray *dirFiles = [NSMutableArray array];
+	NSUInteger newIndex = NSNotFound;
+	for (NSUInteger i = 0; i < filenames.count; i++) {
+		NSString *f = filenames[i];
+		if ([[f stringByDeletingLastPathComponent] isEqualToString:dir]) {
+			if ([f isEqualToString:file]) newIndex = dirFiles.count;
+			[dirFiles addObject:f];
+		}
+	}
+	
+	filenames = [[DYRandomizableArray alloc] init];
+	basePath = [dir hasSuffix:@"/"] ? dir : [dir stringByAppendingString:@"/"];
+	[filenames setArray:dirFiles];
+	currentIndex = (newIndex != NSNotFound) ? newIndex : 0;
+	_mosaicCount = 1;
+	randomMode = NO;
+	_inDirectoryMode = YES;
+	[self layoutMosaic];
+	[self displayImage];
+}
+
+- (void)exitDirectoryMode {
+	if (!_inDirectoryMode) return;
+	filenames = _savedFilenames;
+	basePath = _savedBasePath;
+	currentIndex = _savedIndex;
+	_mosaicCount = _savedMosaicCount;
+	randomMode = _savedRandomMode;
+	_savedFilenames = nil;
+	_savedBasePath = nil;
+	_inDirectoryMode = NO;
+	[self layoutMosaic];
+	[self displayImage];
 }
 
 // while zoomed, wait until mouseUp to advance/end
@@ -1273,6 +1338,10 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 }
 
 - (void)rightMouseDown:(NSEvent *)e {
+	if (_inDirectoryMode) {
+		[self exitDirectoryMode];
+		return;
+	}
 	[self jump:-1];
 }
 

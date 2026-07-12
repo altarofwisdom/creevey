@@ -132,6 +132,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 		imgCache = [[DYImageCache alloc] initWithCapacity:MAX_CACHED];
 		imgCache.fallbackImage = [NSImage imageNamed:@"brokendoc.tif"];
 		_upcomingQueue = [[NSOperationQueue alloc] init];
+			_upcomingQueue.maxConcurrentOperationCount = 1; // sequential is faster on network/FUSE
 		_fileWatcher = [[DYFileWatcher alloc] initWithDelegate:self];
 		
  		self.backgroundColor = NSColor.blackColor;

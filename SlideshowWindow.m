@@ -1606,8 +1606,9 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	_stopLoading = NO;
 	@autoreleasepool {
 		CreeveyController *appDelegate = (CreeveyController *)NSApp.delegate;
+		NSString *scanMsg = NSLocalizedString(@"Scanning directory...", @"");
 		NSString *loadingMsg = NSLocalizedString(@"Getting filenames...", @"");
-		[self updateStatusOnMainThread:^NSString *{ return loadingMsg; }];
+		[self updateStatusOnMainThread:^NSString *{ return scanMsg; }];
 		NSMutableArray *files = [NSMutableArray array];
 		if (path && selectedFiles.count <= 1) {
 			NSUInteger i = 0;
@@ -1618,7 +1619,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 						continue;
 					if ([appDelegate shouldShowFile:url]) {
 						[files addObject:url.path];
-						if ((++i & 127) == 0) [self updateStatusOnMainThread:^NSString *{ return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i]; }];
+						if ((++i & 63) == 0) [self updateStatusOnMainThread:^NSString *{ return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, (unsigned long)i]; }];
 					}
 					if (_stopLoading)
 						return;

@@ -408,6 +408,10 @@ static NSSize BoundingSizeForScreen(NSScreen *screen) {
 		return;
 	}
 	
+	// Restore saved slideshow preferences
+	loopMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"];
+	randomMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"];
+	
 	if (!self.visible) {
 		[self configureScreen];
 	}
@@ -1554,6 +1558,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 - (IBAction)toggleLoopMode:(id)sender {
 	NSMenuItem *item = sender;
 	item.state = loopMode = !item.state;
+	[NSUserDefaults.standardUserDefaults setBool:loopMode forKey:@"Slideshow:Loop"];
 }
 - (IBAction)toggleCheatSheet:(id)sender {
 	[self toggleHelp];
@@ -1573,11 +1578,11 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	item.state = b;
 	BOOL oldRandomMode = randomMode;
 	randomMode = b;
+	[NSUserDefaults.standardUserDefaults setBool:randomMode forKey:@"Slideshow:Random"];
 	if (currentIndex == NSNotFound)
 		return;
-	// slideshow is running, so we need to do some cleanup
 	if (randomMode == oldRandomMode)
-		return; // but if this is a "forced" toggle from hitting "Apply Settings", no action is required
+		return;
 	if (randomMode) {
 		if (currentIndex == filenames.count) currentIndex = NSNotFound;
 		[filenames randomizeStartingWithObjectAtIndex:currentIndex];

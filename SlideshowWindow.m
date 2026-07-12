@@ -854,8 +854,8 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 		[NSCursor setHiddenUntilMouseMoves:YES];
 
 	DYImageQuality q = imgView.showActualSize ? DYImageQualityFull : DYImageQualityHigh;
-	[_upcomingQueue cancelAllOperations];
-	for (short i=0; i<MAX(2, _mosaicCount); i++) {
+	// Pre-cache many mosaics ahead so network hiccups don't block advance
+	for (short i=0; i<MAX(30, _mosaicCount * 6); i++) {
 		if (currentIndex + _mosaicCount + i >= filenames.count)
 			break;
 		NSString *aPath = ResolveAliasToPath(filenames[currentIndex + _mosaicCount + i]);

@@ -10,16 +10,11 @@
 #import "DYCarbonGoodies.h"
 
 static __inline__ BOOL IsAliasURL(NSURL *url) {
-	// unlike FSResolveAliasFile, CFURLCreateBookMarkDataFromFile and its NSURL counterpart do not check
-	// the kIsAlias flag. Apparently not all aliases/bookmarks have this bit set. But for our
-	// purposes we can check it and skip the extra steps if the flag is set.
-	Boolean isAlias = NO;
-	CFBooleanRef b;
-	if (CFURLCopyResourcePropertyForKey((__bridge CFURLRef)url, kCFURLIsAliasFileKey, &b, NULL)) {
-		isAlias = CFBooleanGetValue(b);
-		CFRelease(b);
+	NSNumber *val;
+	if ([url getResourceValue:&val forKey:NSURLIsAliasFileKey error:NULL]) {
+		return val.boolValue;
 	}
-	return isAlias;
+	return NO;
 }
 
 NSString *ResolveAliasToPath(NSString *path) {

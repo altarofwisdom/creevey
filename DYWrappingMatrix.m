@@ -115,6 +115,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	id __weak _appDelegate;
 }
 @synthesize delegate, loadingImage;
+@synthesize listViewMode = _listViewMode;
 
 + (Class)cellClass { return [NSActionCell class]; }
 	// NSActionCell or subclass required for target/action
@@ -268,15 +269,31 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 }
 
 
+- (BOOL)listViewMode { return _listViewMode; }
+- (void)setListViewMode:(BOOL)b {
+	if (_listViewMode == b) return;
+	_listViewMode = b;
+	[self resize:nil];
+	self.needsDisplay = YES;
+}
+
 - (void)calculateCellSizes {
 	// all values dependent on bounds width, cellWidth(, numCells for resize:)
 	float self_w = self.bounds.size.width;
-	cellHeight = cellWidth*3/4;
-	numCols = (int)(self_w)/((int)cellWidth + _hPadding/2);
-	if (numCols == 0) numCols = 1;
-	columnSpacing = (self_w - numCols*cellWidth)/numCols;
-	area_w = cellWidth + columnSpacing;
-	area_h = cellHeight + _vPadding + textHeight;
+	if (_listViewMode) {
+		cellHeight = 0;
+		numCols = 1;
+		columnSpacing = 0;
+		area_w = self_w;
+		area_h = 16 + 2;
+	} else {
+		cellHeight = cellWidth*3/4;
+		numCols = (int)(self_w)/((int)cellWidth + _hPadding/2);
+		if (numCols == 0) numCols = 1;
+		columnSpacing = (self_w - numCols*cellWidth)/numCols;
+		area_w = cellWidth + columnSpacing;
+		area_h = cellHeight + _vPadding + textHeight;
+	}
 }
 - (NSInteger)point2cellnum:(NSPoint)p {
 	NSInteger col = MIN(numCols-1, (NSInteger)p.x/area_w); if (col < 0) col = 0;
@@ -294,6 +311,9 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	NSUInteger row, col;
 	row = n/numCols;
 	col = n%numCols;
+	if (_listViewMode) {
+		return NSMakeRect(0, area_h*row, area_w, area_h);
+	}
 	return ScaledCenteredRect([self imageSizeForIndex:n],
 							  NSMakeRect(cellWidth*col + columnSpacing*(col + 0.5),
 										 (cellHeight+textHeight)*row + _vPadding*(row+0.5),
@@ -590,8 +610,9 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	NSRect textCellRect = NSMakeRect(0, 0, area_w, textHeight + _vPadding/2);
 	NSRect cellRect;
 	NSWindow *myWindow = self.window;
-	myTextCell.font = [NSFont systemFontOfSize:cellWidth >= 160 ? 12 : 4+cellWidth/20]; // ranges from 6 to 12: 6 + 6*(cellWidth-40)/(160-40)
+	myTextCell.font = _listViewMode ? [NSFont systemFontOfSize:13] : [NSFont systemFontOfSize:cellWidth >= 160 ? 12 : 4+cellWidth/20]; // ranges from 6 to 12: 6 + 6*(cellWidth-40)/(160-40)
 	myTextCell.textColor = bgColor.bestTextColor;
+	myTextCell.alignment = _listViewMode ? NSTextAlignmentLeft : NSTextAlignmentCenter;
 	for (i=0; i<numCells; ++i) {
 		row = i/numCols;
 		col = i%numCols;
@@ -605,24 +626,37 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 			[NSBezierPath fillRect:areaRect];
 		}
 		// retrieve the image, or ask the delegate to load it and send it back if it hasn't been set yet
-		NSImage *img = images[i];
+		NSImage *img = nil;
 		NSString *filename = filenames[i];
-		if (img == loadingImage) {
-			if (_respondsToLoadImageForFile && ![requestedFilenames containsObject:filename]) {
-				NSImage *newImage = [delegate wrappingMatrixWantsImageForFile:filename atIndex:i];
-				if (newImage) {
-					images[i] = newImage;
-					img = newImage;
-				} else {
-					[requestedFilenames addObject:filename];
+		if (!_listViewMode) {
+			img = images[i];
+			if (img == loadingImage) {
+				if (_respondsToLoadImageForFile && ![requestedFilenames containsObject:filename]) {
+					NSImage *newImage = [delegate wrappingMatrixWantsImageForFile:filename atIndex:i];
+					if (newImage) {
+						images[i] = newImage;
+						img = newImage;
+					} else {
+						[requestedFilenames addObject:filename];
+					}
 				}
 			}
+			myCell.image = img;
 		}
-		myCell.image = img;
 		// calculate drawing area for thumb and filename area
+		if (_listViewMode) {
+			textCellRect.origin.x = areaRect.origin.x + 4;
+			textCellRect.origin.y = areaRect.origin.y + 1;
+			textCellRect.size.width = areaRect.size.width - 8;
+			textCellRect.size.height = 16;
+			myTextCell.stringValue = filename.lastPathComponent;
+			[myTextCell drawInteriorWithFrame:textCellRect inView:self];
+			continue;
+		}
 		if (textHeight) {
 			textCellRect.origin.x = areaRect.origin.x;
 			textCellRect.origin.y = areaRect.origin.y + area_h - textHeight - _vPadding/2;
+			textCellRect.size.width = areaRect.size.width;
 		}
 		cellRect = [self imageRectForIndex:i];
 		if (![self needsToDrawRect:cellRect] &&
@@ -809,6 +843,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	return s;
 }
 - (unsigned short)exifOrientationForIndex:(NSUInteger)n {
+	if (images[n] == loadingImage) return 0; // Prevent synchronous EXIF file reads for unloaded thumbnails
 	return [_appDelegate exifOrientationForFile:filenames[n]];
 }
 
@@ -922,6 +957,19 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	do {
 		[self setNeedsDisplayInRect:[self cellnum2rect:i]];
 	} while (++i<numCells);
+}
+
+- (void)addImages:(NSArray *)newImages withFilenames:(NSArray *)newFilenames {
+    if (newImages.count == 0) return;
+    for (NSUInteger i = 0; i < newImages.count; i++) {
+        NSImage *img = newImages[i];
+        if (!img || (id)img == [NSNull null]) img = loadingImage;
+        [images addObject:img];
+        [filenames addObject:newFilenames[i]];
+        numCells++;
+    }
+    [self resize:nil];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)removeAllImages {

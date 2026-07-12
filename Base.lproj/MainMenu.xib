@@ -244,6 +244,12 @@ CA
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="854"/>
+                            <menuItem title="View as List" tag="252" id="1955">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="doToggleListView:" target="207" id="1956"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Show File Names" tag="251" id="855">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>

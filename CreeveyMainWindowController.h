@@ -45,6 +45,9 @@
 - (void)fileWasChanged:(NSString *)s;
 - (void)fileWasDeleted:(NSString *)s;
 - (void)filesWereUndeleted:(NSArray *)a;
+- (void)sortThumbnails;
+
+- (void)clearImageCacheQueue;
 - (void)updateExifInfo;
 
 @end

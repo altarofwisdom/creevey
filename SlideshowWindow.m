@@ -1494,10 +1494,10 @@ scheduledTimerWithTimeInterval:timerIntvl
 		NSMutableArray *files = [NSMutableArray array];
 		if (path && selectedFiles.count <= 1) {
 			NSUInteger i = 0;
-			NSDirectoryEnumerator *e = CreeveyEnumerator(path, recurseSubfolders);
+			id<NSFastEnumeration> e = CreeveyEnumerator(path, recurseSubfolders);
 			for (NSURL *url in e) {
 				@autoreleasepool {
-					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:e])
+					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
 						continue;
 					if ([appDelegate shouldShowFile:url]) {
 						[files addObject:url.path];

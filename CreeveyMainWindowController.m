@@ -26,11 +26,17 @@
  * or moved (making the path invalid). We try to mitigate this by watching for changes to the filesystem. */
 
 - (NSComparisonResult)lastPathComponentCompare:(NSString *)other {
+	// lastPathComponent allocates a new string. Use the fact that filenames is already an array of paths,
+	// or just compare the paths directly if we assume they are in the same directory!
+	// Wait, all files in `filenames` are in the SAME directory because we don't recurse unless requested.
+	// But if recurse is true, they could be in subdirectories!
+	// localizedStandardCompare is smart enough to handle paths correctly if we just compare the last path component.
+	// However, we can use the efficient compare on the string directly. But let's keep localizedStandardCompare on lastPathComponent.
 	NSString *aName = self.lastPathComponent, *bName = other.lastPathComponent;
 	NSComparisonResult result = [aName localizedStandardCompare:bName];
-	if (result != NSOrderedSame)
-		return result;
-	return [self localizedStandardCompare:other];
+	if (result == NSOrderedSame)
+		result = [self localizedStandardCompare:other];
+	return result;
 }
 
 - (NSComparisonResult)dateModifiedCompare:(NSString *)other
@@ -442,7 +448,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 // or where "date added" changes without the user actually moving the file away and back into the folder,
 // nor do we handle the user changing a file modification date to *before* the previous value
 - (void)watcherFiles:(NSArray *)files deleted:(NSArray *)deleted {
-	if (!filenamesDone) return;
+	if (!filenamesDone || !loadingDone || filenames.count != imgMatrix.numCells) return;
 	short int sortType = abs(self.sortOrder);
 	BOOL sortByModTime = sortType == 2, sortBySize = sortType == 6;
 	for (NSString *s in files) {
@@ -668,10 +674,10 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			[filenames removeAllObjects];
 			[self clearImageCacheQueue];
 			BOOL recurseSubfolders = self.wantsSubfolders;
-			NSDirectoryEnumerator *e = CreeveyEnumerator(thePath, recurseSubfolders);
+			id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders);
 			for (NSURL *url in e) {
 				@autoreleasepool {
-					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:e])
+					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
 						continue;
 					if ([appDelegate shouldShowFile:url]) {
 						NSString *aPath = url.path;
@@ -742,7 +748,10 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			NSUInteger numFiles = displayedFilenames.count;
 			NSUInteger maxThumbs = [NSUserDefaults.standardUserDefaults
 									integerForKey:@"maxThumbsToLoad"];
+			BOOL isListView = self->imgMatrix.listViewMode;
 		
+			NSMutableArray *batchedImages = [NSMutableArray arrayWithCapacity:256];
+			NSMutableArray *batchedFilenames = [NSMutableArray arrayWithCapacity:256];
 			for (; i<numFiles; ++i) {
 				if (stopCaching) {
 					//NSLog(@"aborted1 %@", origPath);
@@ -753,9 +762,18 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 				NSImage *cachedImage = [thumbsCache imageForKeyInvalidatingCacheIfNecessary:resolvedPath];
 				// what happens if another window happens to invalidate a thumb that we started "access" to?
 				// Actually it won't matter if we make too many calls to endAccess:, worst case is we'll have to recache it at some point.
-				dispatch_async(dispatch_get_main_queue(), ^{
-					[imgMatrix addImage:cachedImage withFilename:origPath];
-				});
+				[batchedImages addObject:cachedImage ?: (id)[NSNull null]];
+				[batchedFilenames addObject:origPath];
+				
+				if (batchedImages.count >= 256) {
+					NSArray *imgs = [batchedImages copy];
+					NSArray *names = [batchedFilenames copy];
+					[batchedImages removeAllObjects];
+					[batchedFilenames removeAllObjects];
+					dispatch_async(dispatch_get_main_queue(), ^{
+						[self->imgMatrix addImages:imgs withFilenames:names];
+					});
+				}
 				if (cachedImage != nil) {
 					[thumbsCache beginAccess:resolvedPath];
 					[_accessedLock lock];
@@ -767,11 +785,18 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 
 				// now, to simulate the original behavior, add a certain number of
 				// images to the queue automatically
-				if (cachedImage == nil && i < maxThumbs) {
+				if (!isListView && cachedImage == nil && i < maxThumbs) {
 					[imageCacheQueueLock lock];
 					[secondaryImageCacheQueue addObject:[[DYMatrixFileInfo alloc] initWithPath:origPath index:i]];
 					[imageCacheQueueLock unlockWithCondition:1];
 				}
+			}
+			if (batchedImages.count > 0) {
+				NSArray *imgs = [batchedImages copy];
+				NSArray *names = [batchedFilenames copy];
+				dispatch_async(dispatch_get_main_queue(), ^{
+					[self->imgMatrix addImages:imgs withFilenames:names];
+				});
 			}
 		}
 		loadingDone = (i==displayedFilenames.count);
@@ -1056,7 +1081,9 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 
 - (NSImage *)wrappingMatrixWantsImageForFile:(NSString *)filename atIndex:(NSUInteger)i {
 	DYImageCache *thumbsCache = appDelegate.thumbsCache;
-	NSImage *thumb = [thumbsCache imageForKeyInvalidatingCacheIfNecessary:ResolveAliasToPath(filename)];
+	// Use unresolved filename for cache check to avoid blocking the main thread with FUSE getattrlist.
+	// For actual aliases, this will be a cache miss, but thumbLoader will resolve it asynchronously.
+	NSImage *thumb = [thumbsCache imageForKeyInvalidatingCacheIfNecessary:filename];
 	if (thumb) return thumb;
 	[imageCacheQueueLock lock];
 	[imageCacheQueue insertObject:[[DYMatrixFileInfo alloc] initWithPath:filename index:i] atIndex:0];
@@ -1075,14 +1102,19 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	NSString *loadingMsg = NSLocalizedString(@"Loading %lu of %lu...", @"");
 	BOOL workToDo = YES;
 	DYMatrixState *currState = [[DYMatrixState alloc] init];
+	NSTimeInterval lastSyncTime = 0;
 	while (YES) {
 		@autoreleasepool {
-			// all calls to the thumbnail view must be on the main thread, which we wait for synchronously
-			// to avoid a deadlock (where the view's drawRect calls our loadImageForFile, which modifies the cache queue),
-			// we save the state of the view before acquiring the lock (we can't use NSRecursiveLock since we need NSConditionLock)
-			dispatch_sync(dispatch_get_main_queue(), ^{
-				[imgMatrix loadCurrentState:currState];
-			});
+			NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+			if (now - lastSyncTime > 0.05) {
+				// all calls to the thumbnail view must be on the main thread, which we wait for synchronously
+				// to avoid a deadlock (where the view's drawRect calls our loadImageForFile, which modifies the cache queue),
+				// we save the state of the view before acquiring the lock (we can't use NSRecursiveLock since we need NSConditionLock)
+				dispatch_sync(dispatch_get_main_queue(), ^{
+					[imgMatrix loadCurrentState:currState];
+				});
+				lastSyncTime = now;
+			}
 			[imageCacheQueueLock lockWhenCondition:1];
 			if (!imageCacheQueueRunning) {
 				// final cleanup before terminating thread

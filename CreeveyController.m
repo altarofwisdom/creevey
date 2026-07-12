@@ -6,6 +6,7 @@
 //California 94305, USA.
 
 @import UniformTypeIdentifiers;
+#import "FastScanner.h"
 #import "CreeveyController.h"
 #import "DYJpegtran.h"
 #import "DYCarbonGoodies.h"
@@ -157,6 +158,8 @@ NSMutableAttributedString* Fileinfo2EXIFString(NSString *origPath, DYImageCache 
 		@"slideshowWindowFitToImage": @NO,
 		@"exifThumbnailShow": @NO,
 		@"showFilenames": @YES,
+		@"listViewMode": @NO,
+		@"trashWarn": @YES,
 		@"sortBy": @1, // sort by filename, ascending
 		@"Slideshow:RerandomizeOnLoop": @YES,
 		@"SlideshowSuppressLoopIndicator": @NO,
@@ -1071,6 +1074,18 @@ enum {
 		[NSUserDefaults.standardUserDefaults setBool:b forKey:@"showFilenames"];
 }
 
+- (IBAction)doToggleListView:(id)sender {
+	BOOL b = !frontWindow.imageMatrix.listViewMode;
+	NSMenuItem *item = sender;
+	item.state = b;
+	frontWindow.imageMatrix.listViewMode = b;
+	if (creeveyWindows.count == 1) // save as default if this is the only window
+		[NSUserDefaults.standardUserDefaults setBool:b forKey:@"listViewMode"];
+	if (b) {
+		[frontWindow clearImageCacheQueue];
+	}
+}
+
 - (IBAction)doAutoRotateDisplayedImage:(id)sender {
 	BOOL b = slidesWindow.isMainWindow ? !slidesWindow.autoRotate : !frontWindow.imageMatrix.autoRotate;
 	NSMenuItem *item = sender;
@@ -1319,6 +1334,7 @@ static void SendAction(NSMenuItem *sender) {
 	short int sortOrder = [NSUserDefaults.standardUserDefaults integerForKey:@"sortBy"];
 	wc.sortOrder = sortOrder;
 	wc.imageMatrix.showFilenames = [NSUserDefaults.standardUserDefaults boolForKey:@"showFilenames"];
+	wc.imageMatrix.listViewMode = [NSUserDefaults.standardUserDefaults boolForKey:@"listViewMode"];
 	wc.imageMatrix.autoRotate = [NSUserDefaults.standardUserDefaults boolForKey:@"autoRotateByOrientationTag"];
 	if (needsPath)
 		[wc setDefaultPath];
@@ -1327,6 +1343,7 @@ static void SendAction(NSMenuItem *sender) {
 	NSMenu *m = [NSApp.mainMenu itemWithTag:VIEW_MENU].submenu;
 	[self updateMenuItemsForSorting:sortOrder];
 	[m itemWithTag:SHOW_FILE_NAMES].state = wc.imageMatrix.showFilenames ? NSControlStateValueOn : NSControlStateValueOff;
+	[m itemWithTag:252].state = wc.imageMatrix.listViewMode ? NSControlStateValueOn : NSControlStateValueOff;
 	[m itemWithTag:AUTO_ROTATE].state = wc.imageMatrix.autoRotate ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
@@ -1363,6 +1380,7 @@ static void SendAction(NSMenuItem *sender) {
 	NSMenu *m = [NSApp.mainMenu itemWithTag:VIEW_MENU].submenu;
 	[self updateMenuItemsForSorting:sortOrder];
 	[m itemWithTag:SHOW_FILE_NAMES].state = frontWindow.imageMatrix.showFilenames ? NSControlStateValueOn : NSControlStateValueOff;
+	[m itemWithTag:252].state = frontWindow.imageMatrix.listViewMode ? NSControlStateValueOn : NSControlStateValueOff;
 	[m itemWithTag:AUTO_ROTATE].state = frontWindow.imageMatrix.autoRotate ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
@@ -1406,35 +1424,52 @@ static void SendAction(NSMenuItem *sender) {
 	[catDefaults setObject:result forKey:@"cats"];
 }
 
-NSDirectoryEnumerator *CreeveyEnumerator(NSString *path, BOOL recurseSubfolders) {
-	return [NSFileManager.defaultManager
-			enumeratorAtURL:[NSURL fileURLWithPath:path isDirectory:YES]
-			includingPropertiesForKeys:@[NSURLIsDirectoryKey,NSURLIsHiddenKey,NSURLIsAliasFileKey,NSURLIsSymbolicLinkKey]
-			options:recurseSubfolders ? 0 : NSDirectoryEnumerationSkipsSubdirectoryDescendants
-			errorHandler:nil];
+
+id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders) {
+	CreeveyController *appDelegate = (CreeveyController *)NSApp.delegate;
+	return [FastScanner scanDirectory:path recurse:recurseSubfolders revealedDirectories:appDelegate.revealedDirectories stop:NULL];
 }
 
 #define IS_URL_DIRECTORY ([url getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue)
 #define IS_URL_HIDDEN    ([url getResourceValue:&val forKey:NSURLIsHiddenKey error:NULL] && val.boolValue)
 
-- (BOOL)handledDirectory:(NSURL *)url subfolders:(BOOL)recurse e:(NSDirectoryEnumerator *)e {
+- (BOOL)handledDirectory:(NSURL *)url subfolders:(BOOL)recurse e:(id)e {
 	NSNumber * __autoreleasing val;
-	if (IS_URL_DIRECTORY) {
-		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"]))
-			[e skipDescendents]; // special addition for mbatch
+	if (url.hasDirectoryPath) {
+		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"])) {
+			if ([e respondsToSelector:@selector(skipDescendants)]) {
+				[e skipDescendants];
+			}
+		}
 		return YES;
 	}
 	return NO;
 }
 
 - (BOOL)shouldShowFile:(NSURL *)url {
+	if ([url.lastPathComponent hasPrefix:@"."]) return NO;
+	
+	NSString *pathExtension = url.pathExtension.lowercaseString;
+	if ([filetypes containsObject:pathExtension]) return YES;
+	if ([disabledFiletypes containsObject:pathExtension]) return NO;
+	
+	// If it has a known non-empty extension that isn't an image, reject immediately
+	// to avoid stat() calls on thousands of sidecar files (e.g. .txt, .xml, .old).
+	if (pathExtension.length > 0 && ![pathExtension isEqualToString:@"alias"]) {
+		return NO;
+	}
+	
 	NSNumber * __autoreleasing val;
 	if (IS_URL_HIDDEN) return NO;
+	
 	url = ResolveAliasURL(url);
 	NSString *path = url.path;
-	NSString *pathExtension = url.pathExtension.lowercaseString;
+	pathExtension = url.pathExtension.lowercaseString;
+	if ([filetypes containsObject:pathExtension]) return YES;
+	if ([disabledFiletypes containsObject:pathExtension]) return NO;
+	
 	if (pathExtension.length == 0) return [fileostypes containsObject:NSHFSTypeOfFile(path)];
-	return [filetypes containsObject:pathExtension] || ([fileostypes containsObject:NSHFSTypeOfFile(path)] && ![disabledFiletypes containsObject:pathExtension]);
+	return NO;
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
@@ -1468,6 +1503,64 @@ NSDirectoryEnumerator *CreeveyEnumerator(NSString *path, BOOL recurseSubfolders)
 		[disabledFiletypes addObject:type];
 	}
 	[NSUserDefaults.standardUserDefaults setObject:disabledFiletypes.allObjects forKey:@"ignoredFileTypes"];
+}
+
+@end
+#include <dirent.h>
+#include <sys/stat.h>
+
+@implementation FastScanner
+
++ (void)scanDirectorySequential:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed results:(NSMutableArray<NSURL *> *)results stop:(volatile char *)stopFlag {
+    if (stopFlag && *stopFlag) return;
+    
+    DIR *dir = opendir(path);
+    if (!dir) return;
+    
+    struct dirent *ent;
+    NSMutableArray *subdirs = recurse ? [NSMutableArray array] : nil;
+    
+    while ((ent = readdir(dir)) != NULL) {
+        if (stopFlag && *stopFlag) break;
+        
+        char *name = ent->d_name;
+        if (name[0] == '.') {
+            if (ent->d_type == DT_DIR) {
+                if (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) continue;
+                char full_path[1024];
+                snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
+                NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:YES];
+                if (![revealed containsObject:url]) continue;
+            } else {
+                continue;
+            }
+        }
+        
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
+        
+        if (ent->d_type == DT_DIR) {
+            if (strcmp(name, "Thumbs") == 0) continue;
+            if (recurse) {
+                [subdirs addObject:[NSString stringWithUTF8String:full_path]];
+            }
+        } else if (ent->d_type == DT_REG || ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK) {
+            NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:NO];
+            [results addObject:url];
+        }
+    }
+    closedir(dir);
+    
+    for (NSString *subdir in subdirs) {
+        if (stopFlag && *stopFlag) break;
+        [self scanDirectorySequential:subdir.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag];
+    }
+}
+
++ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag {
+    NSMutableArray<NSURL *> *results = [NSMutableArray array];
+    [self scanDirectorySequential:path.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag];
+    return results;
 }
 
 @end

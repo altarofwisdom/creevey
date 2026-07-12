@@ -45,6 +45,7 @@
 @property (class, readonly) NSSize maxCellSize;
 
 - (void)addImage:(NSImage *)theImage withFilename:(NSString *)s;
+- (void)addImages:(NSArray *)newImages withFilenames:(NSArray *)newFilenames;
 - (void)addImage:(NSImage *)theImage withFilename:(NSString *)s atIndex:(NSUInteger)i;
 - (void)updateImage:(NSImage *)theImage atIndex:(NSUInteger)i;
 - (BOOL)setImage:(NSImage *)theImage atIndex:(NSUInteger)i forFilename:(NSString *)s; // to be called on main thread from other thread
@@ -73,6 +74,8 @@
 @property (nonatomic) float maxCellWidth;
 @property (nonatomic, readonly) float minCellWidth;
 @property (nonatomic) float cellWidth;
+
+@property (nonatomic) BOOL listViewMode;
 
 @property (nonatomic) BOOL showFilenames;
 @property (nonatomic) BOOL autoRotate;

@@ -6,6 +6,7 @@
 //California 94305, USA.
 
 #import "DirBrowserDelegate.h"
+#include <dirent.h>
 #import "DYCreeveyBrowser.h"
 #import "DYCarbonGoodies.h"
 #import "VDKQueue.h"
@@ -273,26 +274,45 @@ static NSString *FirstPathComponent(NSString *s) {
 		if (currBrowserPathComponents.count > n+1)
 			nextColumn = currBrowserPathComponents[n+1];
 		// ignore NSError here, forin can handle both nil and empty arrays
-		NSArray *directoryContents = [fm contentsOfDirectoryAtURL:[NSURL fileURLWithPath:path isDirectory:YES] includingPropertiesForKeys:@[NSURLIsDirectoryKey,NSURLIsHiddenKey] options:0 error:NULL];
-		sortArray = [NSMutableArray arrayWithCapacity:directoryContents.count];
-		for (NSURL *url in directoryContents) {
-			NSString *filename = url.lastPathComponent;
-			if (n==1 && [url.path isEqualToString:_Volumes]) continue; // always skip /Volumes
-			NSURL *resolvedUrl = ResolveAliasURL(url);
-			NSNumber *val;
-			if ([filename characterAtIndex:0] == '.' || ([url getResourceValue:&val forKey:NSURLIsHiddenKey error:NULL] && val.boolValue)) {
-				if (nextColumn && [filename isEqualToString:nextColumn])
-					[revealedDirectories addObject:resolvedUrl];
-				// skip invisible directories unless we've specifically navigated to one
-				else if (![revealedDirectories containsObject:resolvedUrl]) continue;
+		DIR *dir = opendir(path.UTF8String);
+		sortArray = [NSMutableArray array];
+		if (dir) {
+			struct dirent *ent;
+			while ((ent = readdir(dir)) != NULL) {
+				if (ent->d_type == DT_REG) continue; // Skip regular files fast!
+				if (ent->d_type == DT_UNKNOWN) {
+					char *ext = strrchr(ent->d_name, '.');
+					if (ext) {
+						// Skip files with extensions to avoid main thread stat() calls on FUSE volumes.
+						// Directories rarely have extensions, except .app or .alias.
+						if (strcasecmp(ext, ".app") != 0 && strcasecmp(ext, ".alias") != 0) {
+							continue;
+						}
+					}
+				}
+				
+				NSString *filename = @(ent->d_name);
+				if ([filename isEqualToString:@"."] || [filename isEqualToString:@".."]) continue;
+				if (n==1 && [path isEqualToString:@"/"] && [filename isEqualToString:@"Volumes"]) continue; // always skip /Volumes
+				
+				NSURL *url = [NSURL fileURLWithPath:[path stringByAppendingPathComponent:filename] isDirectory:(ent->d_type == DT_DIR)];
+				NSURL *resolvedUrl = ResolveAliasURL(url);
+				NSNumber *val;
+				if ([filename characterAtIndex:0] == '.' || ([url getResourceValue:&val forKey:NSURLIsHiddenKey error:NULL] && val.boolValue)) {
+					if (nextColumn && [filename isEqualToString:nextColumn])
+						[revealedDirectories addObject:resolvedUrl];
+					// skip invisible directories unless we've specifically navigated to one
+					else if (![revealedDirectories containsObject:resolvedUrl]) continue;
+				}
+				if ([resolvedUrl getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue) {
+					NSString __autoreleasing *displayName;
+					if (![url getResourceValue:&displayName forKey:NSURLLocalizedNameKey error:NULL]) displayName = filename;
+					if ([resolvedUrl getResourceValue:&val forKey:NSURLIsReadableKey error:NULL] && val && !val.boolValue)
+						displayName = [@"⛔️" stringByAppendingString:displayName];
+					[sortArray addObject:@[displayName, filename]];
+				}
 			}
-			if ([resolvedUrl getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue) {
-				NSString __autoreleasing *displayName;
-				if (![url getResourceValue:&displayName forKey:NSURLLocalizedNameKey error:NULL]) displayName = filename;
-				if ([resolvedUrl getResourceValue:&val forKey:NSURLIsReadableKey error:NULL] && val && !val.boolValue)
-					displayName = [@"⛔️" stringByAppendingString:displayName];
-				[sortArray addObject:@[displayName, filename]];
-			}
+			closedir(dir);
 		}
 	}
 	// sort it so it makes sense! the OS doesn't always give directory contents in a convenient order

@@ -1301,8 +1301,10 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	}
 	
 	mouseDragged = YES;
-	if (e.clickCount > 0)
+	if (e.clickCount == 1)
 		[self jump:1];
+	else if (e.clickCount == 2)
+		[self endSlideshow];
 }
 
 - (void)enterDirectoryMode:(NSString *)file {
@@ -1369,8 +1371,10 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	
 	if (_inDirectoryMode) {
 		if (!mouseDragged) {
-			if (e.clickCount > 0)
+			if (e.clickCount == 1)
 				[self jump:1];
+			else if (e.clickCount == 2)
+				[self endSlideshow];
 		}
 		return;
 	}
@@ -1380,8 +1384,10 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	if (mouseDragged)
 		return;
 	
-	if (e.clickCount > 0)
+	if (e.clickCount == 1)
 		[self jump:1];
+	else if (e.clickCount == 2)
+		[self endSlideshow];
 }
 
 - (void)rightMouseDown:(NSEvent *)e {

@@ -794,6 +794,21 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
 	NSUserDefaults *u = NSUserDefaults.standardUserDefaults;
+	
+	// Restore Loop & Random menu checkmarks from saved preferences
+	BOOL loop = [u boolForKey:@"Slideshow:Loop"];
+	BOOL random = [u boolForKey:@"Slideshow:Random"];
+	NSMutableArray *stack = [NSMutableArray arrayWithObject:NSApp.mainMenu];
+	while (stack.count) {
+		NSMenu *menu = stack.lastObject;
+		[stack removeLastObject];
+		for (NSMenuItem *item in menu.itemArray) {
+			if (item.action == @selector(toggleLoopMode:)) item.state = loop;
+			if (item.action == @selector(toggleRandom:)) item.state = random;
+			if (item.hasSubmenu) [stack addObject:item.submenu];
+		}
+	}
+	
 	[self showExifThumbnail:[u boolForKey:@"exifThumbnailShow"]
 			   shrinkWindow:NO];
 	
@@ -1428,9 +1443,9 @@ static void SendAction(NSMenuItem *sender) {
 }
 
 
-id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders) {
+id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, volatile char *stopFlag) {
 	CreeveyController *appDelegate = (CreeveyController *)NSApp.delegate;
-	return [FastScanner scanDirectory:path recurse:recurseSubfolders revealedDirectories:appDelegate.revealedDirectories stop:NULL];
+	return [FastScanner scanDirectory:path recurse:recurseSubfolders revealedDirectories:appDelegate.revealedDirectories stop:stopFlag];
 }
 
 #define IS_URL_DIRECTORY ([url getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue)

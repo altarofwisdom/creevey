@@ -104,6 +104,8 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	NSUInteger _savedIndex;
 	NSInteger _savedMosaicCount;
 	BOOL _savedRandomMode;
+	NSMenuItem *_loopMenuItem;
+	NSMenuItem *_randomMenuItem;
 
 	DYRandomizableArray<NSString *> *filenames;
 	NSOperationQueue *_upcomingQueue;
@@ -153,6 +155,21 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 }
 
 - (void)awakeFromNib {
+	loopMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"];
+	randomMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"];
+	
+	// Defer: find slideshow menu and set self as delegate for menuWillOpen:
+	dispatch_async(dispatch_get_main_queue(), ^{
+		for (NSMenuItem *item in NSApp.mainMenu.itemArray) {
+			for (NSMenuItem *sub in item.submenu.itemArray) {
+				if (sub.action == @selector(toggleLoopMode:)) {
+					item.submenu.delegate = (id)self;
+					return;
+				}
+			}
+		}
+	});
+	
 	self.contentView = [[DYSlideshowContentView alloc] initWithFrame:NSZeroRect];
 	imgView = [[DYImageView alloc] initWithFrame:NSZeroRect];
 	mosaicViews = [NSMutableArray arrayWithObject:imgView];
@@ -415,9 +432,14 @@ static NSSize BoundingSizeForScreen(NSScreen *screen) {
 		return;
 	}
 	
-	// Restore saved slideshow preferences
-	loopMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"];
-	randomMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"];
+	if (!_inDirectoryMode) {
+		loopMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"];
+		randomMode = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"];
+		NSMenuItem *li = [NSApp.mainMenu itemWithTag:3];
+		NSMenuItem *ri = [NSApp.mainMenu itemWithTag:7];
+		[li setState:loopMode];
+		[ri setState:randomMode];
+	}
 	
 	if (!self.visible) {
 		[self configureScreen];
@@ -1252,7 +1274,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 // mouse control added for 1.2.2 (2006 Aug)
 
 - (void)mouseDown:(NSEvent *)e {
-	if (imgView.dragMode)
+	if (_mosaicCount == 1 && imgView.dragMode)
 		return;
 	if (!NSPointInRect(e.locationInWindow, self.contentView.frame))
 		return;
@@ -1266,17 +1288,21 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 				NSUInteger idx = currentIndex + i;
 				if (idx < filenames.count) {
 					[self enterDirectoryMode:filenames[idx]];
+					mouseDragged = YES; // prevent mouseUp from immediately jumping
 					return;
 				}
 			}
 		}
 	}
 	
+	if (_inDirectoryMode) {
+		[self performSelector:@selector(handleLeftClickLongPress) withObject:nil afterDelay:0.5];
+		return;
+	}
+	
 	mouseDragged = YES;
-	if (e.clickCount == 1)
+	if (e.clickCount > 0)
 		[self jump:1];
-	else if (e.clickCount == 2)
-		[self endSlideshow];
 }
 
 - (void)enterDirectoryMode:(NSString *)file {
@@ -1297,6 +1323,12 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 			if ([f isEqualToString:file]) newIndex = dirFiles.count;
 			[dirFiles addObject:f];
 		}
+	}
+	if (self.comparator) {
+		[dirFiles sortUsingComparator:self.comparator];
+		newIndex = [dirFiles indexOfObject:file inSortedRange:NSMakeRange(0, dirFiles.count) options:0 usingComparator:self.comparator];
+	} else {
+		newIndex = [dirFiles indexOfObject:file];
 	}
 	
 	filenames = [[DYRandomizableArray alloc] init];
@@ -1324,24 +1356,35 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	[self displayImage];
 }
 
+- (void)handleLeftClickLongPress {
+	if (_inDirectoryMode) {
+		[self exitDirectoryMode];
+		mouseDragged = YES; // prevent mouseUp from doing anything
+	}
+}
+
 // while zoomed, wait until mouseUp to advance/end
 - (void)mouseUp:(NSEvent *)e {
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleLeftClickLongPress) object:nil];
+	
+	if (_inDirectoryMode) {
+		if (!mouseDragged) {
+			if (e.clickCount > 0)
+				[self jump:1];
+		}
+		return;
+	}
+	
 	if (!imgView.dragMode)
 		return;
 	if (mouseDragged)
 		return;
 	
-	if (e.clickCount == 1)
+	if (e.clickCount > 0)
 		[self jump:1];
-	else if (e.clickCount == 2)
-		[self endSlideshow];
 }
 
 - (void)rightMouseDown:(NSEvent *)e {
-	if (_inDirectoryMode) {
-		[self exitDirectoryMode];
-		return;
-	}
 	[self jump:-1];
 }
 
@@ -1366,6 +1409,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 
 	if (t == NSEventTypeLeftMouseDragged) {
 		mouseDragged = YES;
+		[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleLeftClickLongPress) object:nil];
 	} else if (t == NSEventTypeLeftMouseDown) {
 		mouseDragged = NO; // reset this on mouseDown, not mouseUp (too early)
 		// or wait til after call to super
@@ -1607,18 +1651,23 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 
 
 #pragma mark menu methods
+- (void)menuWillOpen:(NSMenu *)menu {
+	[[menu itemWithTag:3] setState:[NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"]];
+	[[menu itemWithTag:7] setState:[NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"]];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
-	if (menuItem.tag == 3) // Loop
+	if (menuItem.action == @selector(toggleLoopMode:)) {
+		menuItem.state = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Loop"];
 		return YES;
-	if (menuItem.tag == 8) // Scale Up
+	}
+	if (menuItem.action == @selector(toggleRandom:)) {
+		menuItem.state = [NSUserDefaults.standardUserDefaults boolForKey:@"Slideshow:Random"];
 		return YES;
-	if (menuItem.tag == 9) // Actual Size
-		return YES;
-	if (menuItem.tag == 7) // random
-		return YES;
-	// check if the item's menu is the slideshow menu
-	return [menuItem.menu itemWithTag:3] ? [self isActive]
-										   : [super validateMenuItem:menuItem];
+	}
+	if (menuItem.tag == 8) return YES;
+	if (menuItem.tag == 9) return YES;
+	return [menuItem.menu itemWithTag:3] ? [self isActive] : [super validateMenuItem:menuItem];
 }
 
 - (IBAction)endSlideshow:(id)sender {
@@ -1628,6 +1677,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 - (IBAction)toggleLoopMode:(id)sender {
 	NSMenuItem *item = sender;
 	item.state = loopMode = !item.state;
+	_loopMenuItem = item;
 	[NSUserDefaults.standardUserDefaults setBool:loopMode forKey:@"Slideshow:Loop"];
 }
 - (IBAction)toggleCheatSheet:(id)sender {
@@ -1646,6 +1696,7 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 	NSMenuItem *item = sender;
 	BOOL b = !item.state;
 	item.state = b;
+	_loopMenuItem = item;
 	BOOL oldRandomMode = randomMode;
 	randomMode = b;
 	[NSUserDefaults.standardUserDefaults setBool:randomMode forKey:@"Slideshow:Random"];
@@ -1699,19 +1750,12 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 		[self updateStatusOnMainThread:^NSString *{ return scanMsg; }];
 		NSMutableArray *files = [NSMutableArray array];
 		if (path && selectedFiles.count <= 1) {
-			static char stopFlag;
-			stopFlag = 0;
 			// Use FastScanner with progress callback for real-time file counts
 			NSArray<NSURL *> *allURLs = [FastScanner scanDirectory:path
 														 recurse:recurseSubfolders
 											  revealedDirectories:appDelegate.revealedDirectories
-															 stop:&stopFlag
-														 progress:^(NSUInteger totalFound) {
-				[self updateStatusOnMainThread:^NSString *{
-					return [NSString stringWithFormat:@"%@ (%lu)", scanMsg, (unsigned long)totalFound];
-				}];
-			}];
-			if (stopFlag) return;
+															 stop:(volatile char *)&_stopLoading];
+			if (_stopLoading) return;
 			// Filter for image files (FastScanner returns all files)
 			for (NSURL *url in allURLs) {
 				if ([appDelegate shouldShowFile:url]) {

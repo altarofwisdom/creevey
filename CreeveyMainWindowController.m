@@ -703,7 +703,11 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			[filenames removeAllObjects];
 			[self clearImageCacheQueue];
 			BOOL recurseSubfolders = self.wantsSubfolders;
-			id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching);
+			id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
+				[self updateStatusOnMainThread:^NSString *{
+					return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
+				}];
+			});
 			for (NSURL *url in e) {
 				@autoreleasepool {
 					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])

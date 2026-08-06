@@ -1443,9 +1443,9 @@ static void SendAction(NSMenuItem *sender) {
 }
 
 
-id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, volatile char *stopFlag) {
+id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, volatile char *stopFlag, void (^progressBlock)(NSString *currentPath, NSUInteger fileCount)) {
 	CreeveyController *appDelegate = (CreeveyController *)NSApp.delegate;
-	return [FastScanner scanDirectory:path recurse:recurseSubfolders revealedDirectories:appDelegate.revealedDirectories stop:stopFlag];
+	return [FastScanner scanDirectory:path recurse:recurseSubfolders revealedDirectories:appDelegate.revealedDirectories stop:stopFlag progress:progressBlock];
 }
 
 #define IS_URL_DIRECTORY ([url getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue)
@@ -1529,8 +1529,13 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
 
 @implementation FastScanner
 
-+ (void)scanDirectorySequential:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed results:(NSMutableArray<NSURL *> *)results stop:(volatile char *)stopFlag {
++ (void)scanDirectorySequential:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed results:(NSMutableArray<NSURL *> *)results stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger fileCount))progress {
     if (stopFlag && *stopFlag) return;
+    
+    if (progress) {
+        NSString *pathStr = [NSString stringWithUTF8String:path] ?: @"???";
+        progress(pathStr, results.count);
+    }
     
     DIR *dir = opendir(path);
     if (!dir) return;
@@ -1571,13 +1576,13 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
     
     for (NSString *subdir in subdirs) {
         if (stopFlag && *stopFlag) break;
-        [self scanDirectorySequential:subdir.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag];
+        [self scanDirectorySequential:subdir.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
     }
 }
 
-+ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag {
++ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger fileCount))progress {
     NSMutableArray<NSURL *> *results = [NSMutableArray array];
-    [self scanDirectorySequential:path.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag];
+    [self scanDirectorySequential:path.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
     return results;
 }
 

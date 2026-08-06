@@ -4,9 +4,17 @@
 
 @implementation FastScanner
 
-+ (void)scanDirectory:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed group:(dispatch_group_t)group queue:(dispatch_queue_t)queue results:(NSMutableArray<NSURL *> *)results lock:(NSLock *)lock stop:(volatile char *)stopFlag progress:(void (^)(NSUInteger))progress {
++ (void)scanDirectory:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed group:(dispatch_group_t)group queue:(dispatch_queue_t)queue results:(NSMutableArray<NSURL *> *)results lock:(NSLock *)lock stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger))progress {
     if (stopFlag && *stopFlag) return;
     
+    if (progress) {
+        [lock lock];
+        NSUInteger count = results.count;
+        [lock unlock];
+        NSString *pathStr = [NSString stringWithUTF8String:path] ?: @"???";
+        progress(pathStr, count);
+    }
+
     DIR *dir = opendir(path);
     if (!dir) return;
     
@@ -48,9 +56,7 @@
     if (localURLs.count > 0 && !(stopFlag && *stopFlag)) {
         [lock lock];
         [results addObjectsFromArray:localURLs];
-        NSUInteger count = results.count;
         [lock unlock];
-        if (progress) progress(count);
     }
     
     for (NSString *subdir in subdirs) {
@@ -61,7 +67,7 @@
     }
 }
 
-+ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag progress:(void (^)(NSUInteger))progress {
++ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger))progress {
     NSMutableArray<NSURL *> *results = [NSMutableArray array];
     NSLock *lock = [[NSLock alloc] init];
     dispatch_group_t group = dispatch_group_create();

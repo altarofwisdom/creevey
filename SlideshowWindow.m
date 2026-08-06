@@ -399,6 +399,9 @@ static NSSize BoundingSizeForScreen(NSScreen *screen) {
 	if (currentIndex != NSNotFound) {
 		currentIndex = NSNotFound;
 	}
+	_inDirectoryMode = NO;
+	_savedFilenames = nil;
+	_savedBasePath = nil;
 	_stopLoading = YES;
 	[self killTimer];
 	[imgCache abortCaching];
@@ -1760,7 +1763,12 @@ for (NSUInteger m = 0; m < _mosaicCount; m++) {
 			NSArray<NSURL *> *allURLs = [FastScanner scanDirectory:path
 														 recurse:recurseSubfolders
 											  revealedDirectories:appDelegate.revealedDirectories
-															 stop:(volatile char *)&_stopLoading];
+															 stop:(volatile char *)&_stopLoading
+														 progress:^(NSString *currentPath, NSUInteger fileCount) {
+				[self updateStatusOnMainThread:^NSString *{
+					return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
+				}];
+			}];
 			if (_stopLoading) return;
 			// Filter for image files (FastScanner returns all files)
 			for (NSURL *url in allURLs) {

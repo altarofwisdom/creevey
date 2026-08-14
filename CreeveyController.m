@@ -10,6 +10,7 @@
 #import "CreeveyController.h"
 #import "DYJpegtran.h"
 #import "DYCarbonGoodies.h"
+#import "ArchiveManager.h"
 
 #import "DYWrappingMatrix.h"
 #import "CreeveyMainWindowController.h"
@@ -635,6 +636,10 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 	// *** to be more efficient, we should change the path in the cache instead of deleting it
 	if (slidesWindow.isMainWindow) {
 		NSString *s = slidesWindow.currentFile;
+		if ([s containsString:@"::"]) {
+			NSBeep();
+			return;
+		}
 		NSURL *u;
 		if (doTrash ? [self trashFile:s numLeft:1 resultingURL:&u] : (u = _movedUrls[0]) != nil) {
 			[creeveyWindows makeObjectsPerformSelector:@selector(fileWasDeleted:) withObject:s];
@@ -672,6 +677,10 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 		NSMutableArray<NSArray *> *trashedFiles = [NSMutableArray arrayWithCapacity:n];
 		for (NSUInteger i=0; i < n; ++i) {
 			NSString *fullpath = selectedPaths[i];
+			if ([fullpath containsString:@"::"]) {
+				NSBeep();
+				continue;
+			}
 			NSURL * __autoreleasing newURL;
 			char result = (doTrash ? [self trashFile:fullpath numLeft:n-i resultingURL:&newURL] : 1);
 			if (result == 1) {
@@ -1123,9 +1132,53 @@ enum {
 		// non-NSMatrix based radio buttons don't seem to have a way to bind values
 		NSButton *btn = [NSUserDefaults.standardUserDefaults integerForKey:@"slideshowDefaultMode"] ? [self.slideshowDefaultModeFullscreenBtn.superview viewWithTag:1] : self.slideshowDefaultModeFullscreenBtn;
 		btn.state = NSControlStateValueOn;
+		
+		// Inject Cache Size dropdown
+		static dispatch_once_t onceToken;
+		dispatch_once(&onceToken, ^{
+			NSTextField *label = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 20, 150, 20)];
+			label.stringValue = @"Taille du Cache:";
+			label.editable = NO;
+			label.bordered = NO;
+			label.drawsBackground = NO;
+			
+			NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, 16, 100, 26) pullsDown:NO];
+			[popup addItemWithTitle:@"512 Mo"];
+			[popup addItemWithTitle:@"1 Go"];
+			[popup addItemWithTitle:@"2 Go"];
+			[popup addItemWithTitle:@"4 Go"];
+			
+			[popup.itemArray[0] setRepresentedObject:@(512)];
+			[popup.itemArray[1] setRepresentedObject:@(1024)];
+			[popup.itemArray[2] setRepresentedObject:@(2048)];
+			[popup.itemArray[3] setRepresentedObject:@(4096)];
+			
+			NSUInteger currentCacheMB = [[NSUserDefaults standardUserDefaults] integerForKey:@"SlideshowCacheMB"];
+			if (currentCacheMB == 0) currentCacheMB = 1024; // Default 1 GB
+			
+			for (NSMenuItem *item in popup.itemArray) {
+				if ([item.representedObject integerValue] == currentCacheMB) {
+					[popup selectItem:item];
+					break;
+				}
+			}
+			
+			[popup setTarget:self];
+			[popup setAction:@selector(cacheSizeChanged:)];
+			
+			[self.prefsWin.contentView addSubview:label];
+			[self.prefsWin.contentView addSubview:popup];
+		});
 	}
     [prefsWin makeKeyAndOrderFront:nil];
 }
+
+- (void)cacheSizeChanged:(NSPopUpButton *)sender {
+	NSInteger mb = [[sender.selectedItem representedObject] integerValue];
+	[[NSUserDefaults standardUserDefaults] setInteger:mb forKey:@"SlideshowCacheMB"];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"CacheLimitChanged" object:nil];
+}
+
 - (IBAction)chooseStartupDir:(id)sender {
     NSOpenPanel *op=[NSOpenPanel openPanel];
 	NSUserDefaults *u = NSUserDefaults.standardUserDefaults;
@@ -1524,65 +1577,84 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
 }
 
 @end
-#include <dirent.h>
-#include <sys/stat.h>
 
 @implementation FastScanner
 
-+ (void)scanDirectorySequential:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed results:(NSMutableArray<NSURL *> *)results stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger fileCount))progress {
-    if (stopFlag && *stopFlag) return;
-    
-    if (progress) {
-        NSString *pathStr = [NSString stringWithUTF8String:path] ?: @"???";
-        progress(pathStr, results.count);
-    }
-    
-    DIR *dir = opendir(path);
-    if (!dir) return;
-    
-    struct dirent *ent;
-    NSMutableArray *subdirs = recurse ? [NSMutableArray array] : nil;
-    
-    while ((ent = readdir(dir)) != NULL) {
-        if (stopFlag && *stopFlag) break;
-        
-        char *name = ent->d_name;
-        if (name[0] == '.') {
-            if (ent->d_type == DT_DIR) {
-                if (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) continue;
-                char full_path[1024];
-                snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
-                NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:YES];
-                if (![revealed containsObject:url]) continue;
-            } else {
-                continue;
-            }
-        }
-        
-        char full_path[1024];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
-        
-        if (ent->d_type == DT_DIR) {
-            if (strcmp(name, "Thumbs") == 0) continue;
-            if (recurse) {
-                [subdirs addObject:[NSString stringWithUTF8String:full_path]];
-            }
-        } else if (ent->d_type == DT_REG || ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK) {
-            NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:NO];
-            [results addObject:url];
-        }
-    }
-    closedir(dir);
-    
-    for (NSString *subdir in subdirs) {
-        if (stopFlag && *stopFlag) break;
-        [self scanDirectorySequential:subdir.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
-    }
++ (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag {
+    return [self scanDirectory:path recurse:recurse revealedDirectories:revealed stop:stopFlag progress:nil];
 }
 
 + (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger fileCount))progress {
     NSMutableArray<NSURL *> *results = [NSMutableArray array];
-    [self scanDirectorySequential:path.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    BOOL isDirectory = NO;
+    if ([fm fileExistsAtPath:path isDirectory:&isDirectory] && !isDirectory) {
+        if ([ArchiveManager isSupportedArchive:path]) {
+            NSArray *archiveResults = [ArchiveManager scanArchive:path];
+            if (archiveResults) {
+                [results addObjectsFromArray:archiveResults];
+            }
+        } else {
+            [results addObject:[NSURL fileURLWithPath:path isDirectory:NO]];
+        }
+        return results;
+    }
+    
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:path];
+    
+    NSString *relPath;
+    while ((relPath = [enumerator nextObject])) {
+        if (stopFlag && *stopFlag) break;
+        
+        @autoreleasepool {
+            
+            NSString *fullPathStr = [path stringByAppendingPathComponent:relPath];
+            
+            // Skip hidden files manually
+            if ([relPath.lastPathComponent hasPrefix:@"."] || [fullPathStr rangeOfString:@"/."].location != NSNotFound) {
+                if ([enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory]) {
+                    NSURL *url = [NSURL fileURLWithPath:fullPathStr];
+                    NSNumber *val;
+                    if (IS_URL_HIDDEN) {
+                        if (![revealed containsObject:url]) {
+                            [enumerator skipDescendants];
+                        }
+                    }
+                }
+                continue;
+            }
+            
+            if ([enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory]) {
+                if ([relPath.lastPathComponent isEqualToString:@"Thumbs"]) {
+                    [enumerator skipDescendants];
+                }
+                if (!recurse) {
+                    [enumerator skipDescendants];
+                }
+                continue;
+            }
+            
+            if ([ArchiveManager isSupportedArchive:fullPathStr]) {
+                if (progress) {
+                    progress(relPath, results.count);
+                }
+                
+                NSArray *archiveResults = [ArchiveManager scanArchive:fullPathStr];
+                if (archiveResults) {
+                    [results addObjectsFromArray:archiveResults];
+                }
+            } else {
+                NSURL *url = [NSURL fileURLWithPath:fullPathStr isDirectory:NO];
+                [results addObject:url];
+                
+                if (progress && (results.count % 100 == 0)) {
+                    progress(relPath, results.count);
+                }
+            }
+        }
+    }
+    
     return results;
 }
 

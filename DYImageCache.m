@@ -8,6 +8,7 @@
 //  Created by d on 2005.04.15.
 
 #import "DYImageCache.h"
+#import "ArchiveManager.h"
 #import "DYCarbonGoodies.h"
 #import <sys/stat.h>
 
@@ -40,9 +41,7 @@ static unsigned short CGImageSourceOrientationAtIndex(CGImageSourceRef src, size
 }
 
 static CGImageSourceRef CGImageSourceCreateFromPath(NSString *path) {
-	NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:NULL];
-	if (data) return CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
-	return NULL;
+	return [ArchiveManager imageSourceForPath:path];
 }
 
 
@@ -62,6 +61,9 @@ static CGImageSourceRef CGImageSourceCreateFromPath(NSString *path) {
 		if (!stat(s.fileSystemRepresentation, &buf)) {
 			modTime = buf.st_mtimespec.tv_sec;
 			fileSize = buf.st_size;
+		} else if ([s containsString:@"::"]) {
+			fileSize = [ArchiveManager fileSizeForVirtualPath:s];
+			modTime = 0;
 		}
 	}
 	return self;
@@ -174,7 +176,6 @@ static CGImageRef CreateScaledNicer(CGImageRef ref, NSSize boundingSize) {
 {
 	NSLock *cacheLock;
 	NSConditionLock *pendingLock;
-	
 	NSCache<NSString *, DYImageInfo *> *images;
 	NSMutableSet<NSString *> *pending;
 	
@@ -187,6 +188,8 @@ static CGImageRef CreateScaledNicer(CGImageRef ref, NSSize boundingSize) {
 
 @implementation DYImageCache
 @synthesize boundingSize;
+
+
 - (instancetype)initWithCapacity:(NSUInteger)n {
 	if (self = [super init]) {
 		images = [[NSCache alloc] init];
@@ -259,7 +262,7 @@ static void ScaleImage(NSImage *orig, NSSize boundingSize, BOOL _rotatable, DYIm
 
 + (NSData *)createNewThumbFromFile:(NSString *)path getSize:(NSSize *)outSize {
 	NSData *result;
-	CGImageSourceRef orig = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], NULL);
+	CGImageSourceRef orig = CGImageSourceCreateFromPath(path);
 	if (orig) {
 		CGImageRef thumb = CGImageSourceCreateThumbnailAtIndex(orig, 0, (__bridge CFDictionaryRef)@{(__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@(160), (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES});
 		if (thumb) {

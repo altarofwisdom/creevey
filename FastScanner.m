@@ -1,4 +1,5 @@
 #import "FastScanner.h"
+#import "ArchiveManager.h"
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -47,8 +48,17 @@
                 [subdirs addObject:[NSString stringWithUTF8String:full_path]];
             }
         } else if (ent->d_type == DT_REG || ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK) {
-            NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:NO];
-            [localURLs addObject:url];
+            NSString *fullPathStr = [NSString stringWithUTF8String:full_path];
+            if ([ArchiveManager isSupportedArchive:fullPathStr]) {
+                // Si c'est une archive, on la scanne. On n'est pas récursif à l'intérieur.
+                NSArray *archiveResults = [ArchiveManager scanArchive:fullPathStr];
+                if (archiveResults) {
+                    [localURLs addObjectsFromArray:archiveResults];
+                }
+            } else {
+                NSURL *url = [NSURL fileURLWithPath:fullPathStr isDirectory:NO];
+                [localURLs addObject:url];
+            }
         }
     }
     closedir(dir);

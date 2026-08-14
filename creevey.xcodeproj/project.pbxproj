@@ -7,9 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		26F095E3B0876428FFB834BE /* UniversalDetector.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D5EA045D1CD4911E045CE6A /* UniversalDetector.framework */; };
+		27B49FF205B40232AC2FEE61 /* XADMaster.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B778FF13902900FCD5201F5A /* XADMaster.framework */; };
+		38C98F3E34283C8357E4DFDA /* ArchiveManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 8F2624D20BF71DDB3EF3AE66 /* ArchiveManager.m */; };
+		522DEEBAFABE932AAD129A76 /* UniversalDetector.framework in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1D5EA045D1CD4911E045CE6A /* UniversalDetector.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8D11072B0486CEB800E47090 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 089C165CFE840E0CC02AAC07 /* InfoPlist.strings */; };
 		8D11072D0486CEB800E47090 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 29B97316FDCFA39411CA2CEA /* main.m */; settings = {ATTRIBUTES = (); }; };
 		8D11072F0486CEB800E47090 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */; };
+		DB4831CCCFE46D6FC7574F18 /* XADMaster.framework in CopyFiles */ = {isa = PBXBuildFile; fileRef = B778FF13902900FCD5201F5A /* XADMaster.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		F2029D2E0820B68D00CE44FA /* phxslides.icns in Resources */ = {isa = PBXBuildFile; fileRef = F2029D2D0820B68D00CE44FA /* phxslides.icns */; };
 		F202E2B719170B9800EDDCEC /* DYJpegtranPanel.xib in Resources */ = {isa = PBXBuildFile; fileRef = F202E2B519170B9800EDDCEC /* DYJpegtranPanel.xib */; };
 		F202E2C319170DCD00EDDCEC /* CreeveyWindow.xib in Resources */ = {isa = PBXBuildFile; fileRef = F202E2C119170DCD00EDDCEC /* CreeveyWindow.xib */; };
@@ -103,13 +108,31 @@
 		F2FFD7C92B2805C100036217 /* dcraw.c in Sources */ = {isa = PBXBuildFile; fileRef = F2FFD7C72B2805C100036217 /* dcraw.c */; settings = {COMPILER_FLAGS = "-w"; }; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		24A9B55DA2E5C61A4031D2EB /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				DB4831CCCFE46D6FC7574F18 /* XADMaster.framework in CopyFiles */,
+				522DEEBAFABE932AAD129A76 /* UniversalDetector.framework in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = /System/Library/Frameworks/Cocoa.framework; sourceTree = "<absolute>"; };
+		1D5EA045D1CD4911E045CE6A /* UniversalDetector.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniversalDetector.framework; path = UniversalDetector/build/Release/UniversalDetector.framework; sourceTree = "<group>"; };
 		29B97316FDCFA39411CA2CEA /* main.m */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
 		29B97325FDCFA39411CA2CEA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = /System/Library/Frameworks/Foundation.framework; sourceTree = "<absolute>"; };
 		8D1107310486CEB800E47090 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8D1107320486CEB800E47090 /* Phoenix Slides.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Phoenix Slides.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		8F2624D20BF71DDB3EF3AE66 /* ArchiveManager.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = ArchiveManager.m; sourceTree = "<group>"; };
+		B778FF13902900FCD5201F5A /* XADMaster.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XADMaster.framework; path = XADMaster/build/Debug/XADMaster.framework; sourceTree = "<group>"; };
+		D2D181AF7AC697068CB1D7B8 /* ArchiveManager.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = ArchiveManager.h; sourceTree = "<group>"; };
 		F2029D2D0820B68D00CE44FA /* phxslides.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = phxslides.icns; sourceTree = "<group>"; };
 		F202E2D1191713C500EDDCEC /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		F202E2D2191713C500EDDCEC /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/CreeveyWindow.xib; sourceTree = "<group>"; };
@@ -247,6 +270,8 @@
 			files = (
 				8D11072F0486CEB800E47090 /* Cocoa.framework in Frameworks */,
 				F2EFCFC20963D99F0033F328 /* libjpeg.a in Frameworks */,
+				27B49FF205B40232AC2FEE61 /* XADMaster.framework in Frameworks */,
+				26F095E3B0876428FFB834BE /* UniversalDetector.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -301,7 +326,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		29B97314FDCFA39411CA2CEA /* creevey */ = {
+		29B97314FDCFA39411CA2CEA = {
 			isa = PBXGroup;
 			children = (
 				F219AB5A2199531C00960A5A /* Phoenix Slides.entitlements */,
@@ -311,6 +336,8 @@
 				29B97317FDCFA39411CA2CEA /* Resources */,
 				29B97323FDCFA39411CA2CEA /* Frameworks */,
 				19C28FACFE9D520D11CA2CBB /* Products */,
+				D2D181AF7AC697068CB1D7B8 /* ArchiveManager.h */,
+				8F2624D20BF71DDB3EF3AE66 /* ArchiveManager.m */,
 			);
 			name = creevey;
 			sourceTree = "<group>";
@@ -379,6 +406,8 @@
 			children = (
 				1058C7A0FEA54F0111CA2CBB /* Linked Frameworks */,
 				1058C7A2FEA54F0111CA2CBB /* Other Frameworks */,
+				B778FF13902900FCD5201F5A /* XADMaster.framework */,
+				1D5EA045D1CD4911E045CE6A /* UniversalDetector.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -500,6 +529,7 @@
 				8D1107290486CEB800E47090 /* Resources */,
 				8D11072C0486CEB800E47090 /* Sources */,
 				8D11072E0486CEB800E47090 /* Frameworks */,
+				24A9B55DA2E5C61A4031D2EB /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -542,7 +572,8 @@
 				it,
 				Base,
 			);
-			mainGroup = 29B97314FDCFA39411CA2CEA /* creevey */;
+			mainGroup = 29B97314FDCFA39411CA2CEA;
+			productRefGroup = 19C28FACFE9D520D11CA2CBB /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -626,6 +657,7 @@
 				F262D803089AE58200CD3701 /* DYVersChecker.m in Sources */,
 				F20A7A4D0A85E1E300F4221C /* UKPrefsPanel.m in Sources */,
 				F2FA6DEC2AF8CF4700F3A28B /* VDKQueue.m in Sources */,
+				38C98F3E34283C8357E4DFDA /* ArchiveManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -751,8 +783,17 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 35;
 				ENABLE_HARDENED_RUNTIME = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/XADMaster/build/Debug\"",
+					"\"$(SRCROOT)/UniversalDetector/build/Release\"",
+				);
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/libjpeg";
 				MARKETING_VERSION = 1.6.2;
 				PRODUCT_BUNDLE_IDENTIFIER = net.blyt.phoenixslides;
@@ -776,8 +817,17 @@
 				CURRENT_PROJECT_VERSION = 35;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_HARDENED_RUNTIME = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/XADMaster/build/Debug\"",
+					"\"$(SRCROOT)/UniversalDetector/build/Release\"",
+				);
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/libjpeg";
 				MARKETING_VERSION = 1.6.2;
 				PRODUCT_BUNDLE_IDENTIFIER = net.blyt.phoenixslides;

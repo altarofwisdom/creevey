@@ -10,6 +10,7 @@
 #import "DYCreeveyBrowser.h"
 #import "DYCarbonGoodies.h"
 #import "VDKQueue.h"
+#import "ArchiveManager.h"
 
 static NSString * const _Volumes = @"/Volumes";
 
@@ -279,13 +280,26 @@ static NSString *FirstPathComponent(NSString *s) {
 		if (dir) {
 			struct dirent *ent;
 			while ((ent = readdir(dir)) != NULL) {
-				if (ent->d_type == DT_REG) continue; // Skip regular files fast!
+				if (ent->d_type == DT_REG) {
+					char *ext = strrchr(ent->d_name, '.');
+					BOOL isArchive = NO;
+					if (ext) {
+						if (strcasecmp(ext, ".zip") == 0 || strcasecmp(ext, ".rar") == 0 || strcasecmp(ext, ".7z") == 0 || strcasecmp(ext, ".cbz") == 0 || strcasecmp(ext, ".cbr") == 0 || strcasecmp(ext, ".tar") == 0) {
+							isArchive = YES;
+						}
+					}
+					if (!isArchive) continue;
+				}
 				if (ent->d_type == DT_UNKNOWN) {
 					char *ext = strrchr(ent->d_name, '.');
 					if (ext) {
 						// Skip files with extensions to avoid main thread stat() calls on FUSE volumes.
 						// Directories rarely have extensions, except .app or .alias.
-						if (strcasecmp(ext, ".app") != 0 && strcasecmp(ext, ".alias") != 0) {
+                        // We also allow archives.
+						if (strcasecmp(ext, ".app") != 0 && strcasecmp(ext, ".alias") != 0 &&
+                            strcasecmp(ext, ".zip") != 0 && strcasecmp(ext, ".rar") != 0 &&
+                            strcasecmp(ext, ".7z") != 0 && strcasecmp(ext, ".cbz") != 0 &&
+                            strcasecmp(ext, ".cbr") != 0 && strcasecmp(ext, ".tar") != 0) {
 							continue;
 						}
 					}
@@ -304,7 +318,13 @@ static NSString *FirstPathComponent(NSString *s) {
 					// skip invisible directories unless we've specifically navigated to one
 					else if (![revealedDirectories containsObject:resolvedUrl]) continue;
 				}
+				BOOL isDir = NO;
 				if ([resolvedUrl getResourceValue:&val forKey:NSURLIsDirectoryKey error:NULL] && val.boolValue) {
+					isDir = YES;
+				} else if (ent->d_type == DT_REG) {
+					isDir = YES;
+				}
+				if (isDir) {
 					NSString __autoreleasing *displayName;
 					if (![url getResourceValue:&displayName forKey:NSURLLocalizedNameKey error:NULL]) displayName = filename;
 					if ([resolvedUrl getResourceValue:&val forKey:NSURLIsReadableKey error:NULL] && val && !val.boolValue)

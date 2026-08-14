@@ -38,8 +38,11 @@ typedef NS_ENUM(unsigned char, DYImageQuality) {
 @interface DYImageCache : NSObject
 @property (nonatomic) BOOL fastThumbnails; // faster but lower quality rendering. default is NO
 @property (strong, nonatomic) NSImage *fallbackImage; // if set, store this image in the cache if a file does not load
+@property (nonatomic, readonly) NSUInteger count;
+@property (nonatomic, readonly) NSUInteger totalCost;
 - (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithCapacity:(NSUInteger)n NS_DESIGNATED_INITIALIZER;
+- (void)setCacheLimitMB:(NSNumber *)mb;
 
 @property (nonatomic, readonly) float boundingWidth;
 @property (nonatomic) NSSize boundingSize;

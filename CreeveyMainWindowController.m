@@ -10,6 +10,7 @@
 #import "NSMutableArray+DYMovable.h"
 #import "DirBrowserDelegate.h"
 #import "DYFileWatcher.h"
+#import "ArchiveManager.h"
 
 #import "CreeveyController.h"
 #import "DYCreeveyBrowser.h"
@@ -714,6 +715,9 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 						continue;
 					if ([appDelegate shouldShowFile:url]) {
 						NSString *aPath = url.path;
+                        if ([aPath containsString:@"::"]) {
+                            NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
+                        }
 						[filenames addObject:aPath];
 						if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
 							[filesForSlideshow addObject:aPath];
@@ -1071,7 +1075,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 					NSImage *img = [[NSImage alloc] initByReferencingFile:theFile];
 					pixelSize = img ? img.size : NSZeroSize;
 				} else {
-					CGImageSourceRef imgSrc = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:theFile isDirectory:NO], NULL);
+					CGImageSourceRef imgSrc = [ArchiveManager imageSourceForPath:theFile];
 					if (imgSrc) {
 						NSDictionary *opts = @{(__bridge NSString *)kCGImageSourceShouldCache: @NO};
 						CGImageRef ref = CGImageSourceCreateImageAtIndex(imgSrc, 0, (__bridge CFDictionaryRef)opts);

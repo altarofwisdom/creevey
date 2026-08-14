@@ -11,6 +11,7 @@
 #import "DirBrowserDelegate.h"
 #import "DYFileWatcher.h"
 #import "ArchiveManager.h"
+#import "TagManager.h"
 
 #import "CreeveyController.h"
 #import "DYCreeveyBrowser.h"
@@ -276,6 +277,11 @@ typedef struct {
 	
 	[NSThread detachNewThreadSelector:@selector(thumbLoader:) toTarget:self withObject:nil];
 	[NSUserDefaultsController.sharedUserDefaultsController addObserver:self forKeyPath:@"values.DYWrappingMatrixMaxCellWidth" options:0 context:NULL];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(tagsUpdated:) name:@"TagsUpdated" object:nil];
+}
+
+- (void)tagsUpdated:(NSNotification *)note {
+    [imgMatrix setNeedsDisplay:YES];
 }
 
 - (void)mosaicCountChanged:(NSPopUpButton *)sender {
@@ -922,10 +928,28 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	if (e.characters.length == 0) return;
 	unichar c = [e.characters characterAtIndex:0];
 	if (filenamesDone && c >= NSF1FunctionKey && c <= NSF12FunctionKey) {
-		c = c - NSF1FunctionKey + 1;
-		if ((e.modifierFlags & NSEventModifierFlagCommand) != 0) {
-			NSUInteger i;
-			short j;
+		int fn = c - NSF1FunctionKey + 1; // 1 for F1, 2 for F2, etc
+		
+		BOOL isAlt = (e.modifierFlags & NSEventModifierFlagOption) != 0;
+		BOOL isShift = (e.modifierFlags & NSEventModifierFlagShift) != 0;
+		
+		if (isAlt) {
+			// Alt + F1..F12 : Filter
+			if (fn == 1) {
+				currCat = 0; // Show all
+			} else {
+				currCat = fn;
+			}
+			stopCaching = 1;
+			currentFilesDeletable = NO;
+			filenamesDone = NO;
+			slidesBtn.enabled = NO;
+			[NSThread detachNewThreadSelector:@selector(loadImages:)
+									 toTarget:self
+								   withObject:nil];
+			return;
+		} else {
+			// Assign, Clear, or Toggle tags on selection
 			NSArray *a = imgMatrix.selectedFilenames;
 			if (!a.count) {
 				NSBeep();
@@ -933,43 +957,90 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			}
 			
 			NSMutableSet * __strong *cats = appDelegate.cats;
-			for (i=a.count-1; i != -1; i--) { // TODO: this code is suspect
-				id fname = a[i];
-				if (c == 1) {
-					for (j=0; j<NUM_FNKEY_CATS; ++j)
+			NSString *tagString = [NSString stringWithFormat:@"F%d", fn];
+			
+			for (id fname in a) {
+				NSURL *url = [NSURL fileURLWithPath:fname isDirectory:NO];
+				
+				if (fn == 1) { // F1: Clear all F2-F12 tags
+					for (int j = 0; j < NUM_FNKEY_CATS; ++j) {
 						[cats[j] removeObject:fname];
+					}
+					// Remove F2-F12 from file using TagManager
+					[[TagManager sharedManager] fetchTagsForURL:url completion:^(NSArray<NSString *> *tags) {
+						NSMutableArray *newTags = tags ? [tags mutableCopy] : [NSMutableArray array];
+						for (int j = 2; j <= 12; ++j) {
+							[newTags removeObject:[NSString stringWithFormat:@"F%d", j]];
+						}
+						[[TagManager sharedManager] writeTags:newTags toURL:url completion:nil];
+					}];
 				} else {
-					if ([cats[c-2] containsObject:fname])
-						[cats[c-2] removeObject:fname];
-					else
-						[cats[c-2] addObject:fname];
+					if (isShift) {
+						// Toggle tag
+						if ([cats[fn - 2] containsObject:fname]) {
+							[cats[fn - 2] removeObject:fname];
+							// Remove from file
+							[[TagManager sharedManager] fetchTagsForURL:url completion:^(NSArray<NSString *> *tags) {
+								NSMutableArray *newTags = tags ? [tags mutableCopy] : [NSMutableArray array];
+								[newTags removeObject:tagString];
+								[[TagManager sharedManager] writeTags:newTags toURL:url completion:nil];
+							}];
+						} else {
+							[cats[fn - 2] addObject:fname];
+							// Add to file
+							[[TagManager sharedManager] fetchTagsForURL:url completion:^(NSArray<NSString *> *tags) {
+								NSMutableArray *newTags = tags ? [tags mutableCopy] : [NSMutableArray array];
+								if (![newTags containsObject:tagString]) {
+									[newTags addObject:tagString];
+									[[TagManager sharedManager] writeTags:newTags toURL:url completion:nil];
+								}
+							}];
+						}
+					} else {
+						// Absolute assignment
+						for (int j = 0; j < NUM_FNKEY_CATS; ++j) {
+							if (j == fn - 2) {
+								[cats[j] addObject:fname];
+							} else {
+								[cats[j] removeObject:fname];
+							}
+						}
+						
+						[[TagManager sharedManager] fetchTagsForURL:url completion:^(NSArray<NSString *> *tags) {
+							NSMutableArray *newTags = tags ? [tags mutableCopy] : [NSMutableArray array];
+							for (int j = 2; j <= 12; ++j) {
+								[newTags removeObject:[NSString stringWithFormat:@"F%d", j]];
+							}
+							[newTags addObject:tagString];
+							[[TagManager sharedManager] writeTags:newTags toURL:url completion:nil];
+						}];
+					}
 				}
 			}
-			[appDelegate updateCats];
-			if (!currCat || (c && c != currCat)) {
-				[self updateStatusString:[NSString stringWithFormat:
-					NSLocalizedString(@"%u image(s) updated for Group %i", @""),
-					(unsigned int)a.count, c]];
-				[self performSelector:@selector(updateStatusFld)
-						   withObject:nil
-						   afterDelay:2];
-				return;
-			} // but reload, below, if displaying a cat
-		} else {
-			if (c==1) c = 0;
-			if (currCat == c) return;
-			currCat = c ? c : 1; // strictly speaking, should go after the lock
-			// but we're reloading anyway, it's OK
+			
+			[self updateStatusString:[NSString stringWithFormat:
+				NSLocalizedString(@"%u image(s) updated for Group %i", @""),
+				(unsigned int)a.count, fn]];
+			[self performSelector:@selector(updateStatusFld)
+					   withObject:nil
+					   afterDelay:2];
+			
+			// Refresh UI if filtering
+			if (currCat && currCat != fn && fn != 1) {
+				// We removed it from current view, so reload
+				stopCaching = 1;
+				currentFilesDeletable = NO;
+				filenamesDone = NO;
+				slidesBtn.enabled = NO;
+				[NSThread detachNewThreadSelector:@selector(loadImages:)
+										 toTarget:self
+									   withObject:nil];
+			} else {
+				// Just repaint
+				[imgMatrix setNeedsDisplay:YES];
+			}
+			return;
 		}
-		
-		stopCaching = 1; // don't need to lock, not changing anything
-		currentFilesDeletable = NO; // dup code from displayDir?
-		filenamesDone = NO;
-		slidesBtn.enabled = NO;
-		[NSThread detachNewThreadSelector:@selector(loadImages:)
-								 toTarget:self
-							   withObject:nil];
-		return;
 	}
 	[super keyDown:e];
 }

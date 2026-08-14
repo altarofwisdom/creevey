@@ -11,6 +11,7 @@
 #import "DYJpegtran.h"
 #import "DYCarbonGoodies.h"
 #import "ArchiveManager.h"
+#import "TagManager.h"
 
 #import "DYWrappingMatrix.h"
 #import "CreeveyMainWindowController.h"
@@ -870,20 +871,7 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 		DYVersCheckForUpdateAndNotify(NO);
 
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
-		// because screw thread safety
-		@autoreleasepool {
-			NSArray<NSArray *> *savedCats = [catDefaults arrayForKey:@"cats"];
-			short i = 0;
-			for (NSArray *a in savedCats) {
-				NSMutableArray *readable = [NSMutableArray arrayWithCapacity:a.count];
-				for (NSString *path in a) {
-					if (0 == access(path.fileSystemRepresentation, R_OK))
-						[readable addObject:path];
-				}
-				[cats[i++] addObjectsFromArray:readable];
-			}
-			[self updateCats];
-		}
+		// Legacy cats load removed for native macOS tags integration
 	});
 }
 
@@ -1489,10 +1477,7 @@ static void SendAction(NSMenuItem *sender) {
 - (DYImageCache *)thumbsCache { return thumbsCache; }
 - (NSMutableSet * __strong *)cats { return cats; }
 - (void)updateCats {
-	NSMutableArray *result = [NSMutableArray arrayWithCapacity:NUM_FNKEY_CATS];
-	for (short i=0; i<NUM_FNKEY_CATS; ++i)
-		[result addObject:cats[i].allObjects];
-	[catDefaults setObject:result forKey:@"cats"];
+    // Legacy cats save removed
 }
 
 
@@ -1578,7 +1563,90 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
 
 @end
 
+#include <dirent.h>
+#include <sys/stat.h>
+
 @implementation FastScanner
+
++ (void)scanDirectorySequential:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed results:(NSMutableArray<NSURL *> *)results stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger fileCount))progress {
+    if (stopFlag && *stopFlag) return;
+    
+    DIR *dir = opendir(path);
+    if (!dir) return;
+    
+    struct dirent *ent;
+    NSMutableArray *subdirs = recurse ? [NSMutableArray array] : nil;
+    
+    while ((ent = readdir(dir)) != NULL) {
+        if (stopFlag && *stopFlag) break;
+        
+        char *name = ent->d_name;
+        if (name[0] == '.') {
+            if (ent->d_type == DT_DIR) {
+                if (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) continue;
+                char full_path[1024];
+                snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
+                NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:full_path] isDirectory:YES];
+                if (![revealed containsObject:url]) continue;
+            } else {
+                continue;
+            }
+        }
+        
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
+        
+        if (ent->d_type == DT_DIR) {
+            if (strcmp(name, "Thumbs") == 0) continue;
+            if (recurse) {
+                [subdirs addObject:[NSString stringWithUTF8String:full_path]];
+            }
+        } else if (ent->d_type == DT_REG || ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK) {
+            NSString *fullPathStr = [NSString stringWithUTF8String:full_path];
+            
+            if ([ArchiveManager isSupportedArchive:fullPathStr]) {
+                if (progress) progress([NSString stringWithUTF8String:name], results.count);
+                NSArray *archiveResults = [ArchiveManager scanArchive:fullPathStr];
+                if (archiveResults) {
+                    [results addObjectsFromArray:archiveResults];
+                }
+            } else {
+                NSURL *url = [NSURL fileURLWithPath:fullPathStr isDirectory:NO];
+                [results addObject:url];
+                
+                [[TagManager sharedManager] fetchTagsForURL:url completion:^(NSArray<NSString *> *tags) {
+                    if (tags.count > 0) {
+                        CreeveyController *appDel = (CreeveyController *)[NSApp delegate];
+                        NSMutableSet * __strong *appCats = appDel.cats;
+                        BOOL changed = NO;
+                        for (NSString *tag in tags) {
+                            if ([tag hasPrefix:@"F"]) {
+                                int fNum = [[tag substringFromIndex:1] intValue];
+                                if (fNum >= 2 && fNum <= 12) {
+                                    [appCats[fNum - 2] addObject:fullPathStr];
+                                    changed = YES;
+                                }
+                            }
+                        }
+                        if (changed) {
+                            [[NSNotificationCenter defaultCenter] postNotificationName:@"TagsUpdated" object:nil];
+                        }
+                    }
+                }];
+                
+                if (progress && (results.count % 100 == 0)) {
+                    progress([NSString stringWithUTF8String:name], results.count);
+                }
+            }
+        }
+    }
+    closedir(dir);
+    
+    for (NSString *subdir in subdirs) {
+        if (stopFlag && *stopFlag) break;
+        [self scanDirectorySequential:subdir.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
+    }
+}
 
 + (NSArray<NSURL *> *)scanDirectory:(NSString *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed stop:(volatile char *)stopFlag {
     return [self scanDirectory:path recurse:recurse revealedDirectories:revealed stop:stopFlag progress:nil];
@@ -1601,59 +1669,7 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
         return results;
     }
     
-    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:path];
-    
-    NSString *relPath;
-    while ((relPath = [enumerator nextObject])) {
-        if (stopFlag && *stopFlag) break;
-        
-        @autoreleasepool {
-            
-            NSString *fullPathStr = [path stringByAppendingPathComponent:relPath];
-            
-            // Skip hidden files manually
-            if ([relPath.lastPathComponent hasPrefix:@"."] || [fullPathStr rangeOfString:@"/."].location != NSNotFound) {
-                if ([enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory]) {
-                    NSURL *url = [NSURL fileURLWithPath:fullPathStr];
-                    NSNumber *val;
-                    if (IS_URL_HIDDEN) {
-                        if (![revealed containsObject:url]) {
-                            [enumerator skipDescendants];
-                        }
-                    }
-                }
-                continue;
-            }
-            
-            if ([enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory]) {
-                if ([relPath.lastPathComponent isEqualToString:@"Thumbs"]) {
-                    [enumerator skipDescendants];
-                }
-                if (!recurse) {
-                    [enumerator skipDescendants];
-                }
-                continue;
-            }
-            
-            if ([ArchiveManager isSupportedArchive:fullPathStr]) {
-                if (progress) {
-                    progress(relPath, results.count);
-                }
-                
-                NSArray *archiveResults = [ArchiveManager scanArchive:fullPathStr];
-                if (archiveResults) {
-                    [results addObjectsFromArray:archiveResults];
-                }
-            } else {
-                NSURL *url = [NSURL fileURLWithPath:fullPathStr isDirectory:NO];
-                [results addObject:url];
-                
-                if (progress && (results.count % 100 == 0)) {
-                    progress(relPath, results.count);
-                }
-            }
-        }
-    }
+    [self scanDirectorySequential:path.UTF8String recurse:recurse revealedDirectories:revealed results:results stop:stopFlag progress:progress];
     
     return results;
 }

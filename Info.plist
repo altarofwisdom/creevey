@@ -88,7 +88,11 @@
 	<string>©2005-2026 Dominic Yu, Gold Mountain Software.</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Creevey needs access to your network drives to read tags and images.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Creevey needs access to your external drives to read tags and images.</string>
 </dict>
 </plist>

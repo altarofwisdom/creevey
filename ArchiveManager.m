@@ -53,10 +53,11 @@ NSString * const ArchiveVirtualPathSeparator = @"::";
             task.standardError = [NSPipe pipe]; // Ignore errors
             
             [task launch];
+            
+            NSData *data = [[pipe fileHandleForReading] readDataToEndOfFile];
             [task waitUntilExit];
             
             if (task.terminationStatus == 0) {
-                NSData *data = [[pipe fileHandleForReading] readDataToEndOfFile];
                 NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                 // Fallback encodings if UTF8 fails
                 if (!output && data.length > 0) {

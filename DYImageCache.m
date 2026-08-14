@@ -176,7 +176,8 @@ static CGImageRef CreateScaledNicer(CGImageRef ref, NSSize boundingSize) {
 {
 	NSLock *cacheLock;
 	NSConditionLock *pendingLock;
-	NSCache<NSString *, DYImageInfo *> *images;
+	NSMutableDictionary<NSString *, DYImageInfo *> *images;
+	NSMutableArray<NSString *> *cacheKeys;
 	NSMutableSet<NSString *> *pending;
 	
 	_Atomic BOOL cachingShouldStop;
@@ -192,9 +193,8 @@ static CGImageRef CreateScaledNicer(CGImageRef ref, NSSize boundingSize) {
 
 - (instancetype)initWithCapacity:(NSUInteger)n {
 	if (self = [super init]) {
-		images = [[NSCache alloc] init];
-		images.countLimit = n;
-		images.evictsObjectsWithDiscardedContent = YES;
+		images = [[NSMutableDictionary alloc] init];
+		cacheKeys = [[NSMutableArray alloc] init];
 		pending = [[NSMutableSet alloc] init];
 		_maxCount = n;
 		
@@ -202,6 +202,13 @@ static CGImageRef CreateScaledNicer(CGImageRef ref, NSSize boundingSize) {
 		pendingLock = [[NSConditionLock alloc] initWithCondition:0];
 	}
     return self;
+}
+
+- (NSUInteger)count {
+	[cacheLock lock];
+	NSUInteger c = images.count;
+	[cacheLock unlock];
+	return c;
 }
 
 - (void)beginAccess:(NSString *)key {
@@ -561,18 +568,18 @@ static void ScaleCGImage(CGImageSourceRef orig, CGSize boundingSize, DYImageInfo
 - (void)addImage:(DYImageInfo *)imgInfo forFile:(NSString *)s {
 	[cacheLock lock];
 	[pending removeObject:s];
-	if (!cachingShouldStop) {
-		// for some reason, very occasionally you can add an object to the cache but it doesn't stick. This results in sort of infinite looping in the slideshow as it creates a cached image which gets immediately discarded, over and over. The slideshow just shows a blank screen with the message "loading...".
-		// This could also happen to the thumbnail cache, in which case you'll get a broken doc even if it's a valid file.
-		// To work around this we call setObject: repeatedly until it does stick. In testing this appears to be successful with just one additional attempt.
-		NSUInteger i = 0;
-		do {
-			[images setObject:imgInfo forKey:s];
-		} while ([images objectForKey:s] == nil && i++ < 10000);
-		// If after myriad attempts it is still unsuccessful, hang on to the object to return on the subsequent call to infoForKey/imageForKey. I don't expect this to ever be necessary, but better to avoid any infinite loop.
-		if ([images objectForKey:s] == nil)
-			_stupidCacheWorkaround = imgInfo;
-	}
+		if (!cachingShouldStop) {
+			if (!images[s]) {
+				[cacheKeys addObject:s];
+			}
+			images[s] = imgInfo;
+			
+			while (cacheKeys.count > _maxCount) {
+				NSString *oldest = cacheKeys.firstObject;
+				[images removeObjectForKey:oldest];
+				[cacheKeys removeObjectAtIndex:0];
+			}
+		}
 	[cacheLock unlock];
 	[pendingLock lock];
 	[pendingLock unlockWithCondition:s.hash]; // signal to any waiting threads
@@ -636,22 +643,24 @@ static void ScaleCGImage(CGImageSourceRef orig, CGSize boundingSize, DYImageInfo
 - (void)removeImageForKey:(NSString *)s {
 	[cacheLock lock];
 	// be thread safe
-	if (CacheContains(s)) {
-		if (PendingContains(s)) {
-			// wait until pending is done
-			[cacheLock unlock];
-			[pendingLock lockWhenCondition:s.hash];
-			[pendingLock unlockWithCondition:s.hash];
-			[cacheLock lock];
+		if (CacheContains(s)) {
+			if (PendingContains(s)) {
+				// wait until pending is done
+				[cacheLock unlock];
+				[pendingLock lockWhenCondition:s.hash];
+				[pendingLock unlockWithCondition:s.hash];
+				[cacheLock lock];
+			}
+			[images removeObjectForKey:s];
+			[cacheKeys removeObject:s];
 		}
-		[images removeObjectForKey:s];
-	}
 	[cacheLock unlock];
 }
 
 - (void)removeAllImages {
 	[cacheLock lock];
 	[images removeAllObjects];
+	[cacheKeys removeAllObjects];
 	[pending removeAllObjects];
 	_stupidCacheWorkaround = nil;
 	[cacheLock unlock];

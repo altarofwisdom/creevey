@@ -185,6 +185,96 @@ static NSString *FirstPathComponent(NSString *s) {
 	return [self browserpath2syspath:s];
 }
 
+- (NSString *)pathForRow:(NSInteger)row inColumn:(NSInteger)col {
+    NSString *parentBrowserPath = (col > 0) ? [_b pathToColumn:col] : @"/";
+    NSString *filename = colsInternal[col][row];
+    NSString *bPath;
+    if ([parentBrowserPath isEqualToString:@"/"]) {
+        bPath = [@"/" stringByAppendingString:filename];
+    } else {
+        bPath = [parentBrowserPath stringByAppendingPathComponent:filename];
+    }
+    return [self browserpath2syspath:bPath];
+}
+- (void)toggleSelectionForRow:(NSNumber *)rowObj inColumn:(NSNumber *)colObj {
+    NSInteger row = [rowObj integerValue];
+    NSInteger col = [colObj integerValue];
+    
+    if (!self.customSelectedPaths) {
+        self.customSelectedPaths = [NSMutableSet set];
+        self.customSelectedColumn = -1;
+    }
+    
+    // If clicking in a different column than the current multiple selection, clear it!
+    if (self.customSelectedPaths.count > 0 && self.customSelectedColumn != col) {
+        NSLog(@"[DirBrowserDelegate] Cmd-click in different col (%ld vs %ld). Clearing previous custom selection.", (long)col, (long)self.customSelectedColumn);
+        [self.customSelectedPaths removeAllObjects];
+        for (NSInteger c = 0; c <= [_b lastColumn]; c++) {
+            [_b reloadColumn:c];
+        }
+    }
+    self.customSelectedColumn = col;
+
+    // Check if there is a single native selection that we should inherit
+    if (self.customSelectedPaths.count == 0) {
+        NSString *nativePath = [self path];
+        if (nativePath) {
+            NSLog(@"[DirBrowserDelegate] custom selection init - inheriting native path: %@", nativePath);
+            [self.customSelectedPaths addObject:nativePath];
+        }
+    }
+    
+    NSString *toggledPath = [self pathForRow:row inColumn:col];
+    if ([self.customSelectedPaths containsObject:toggledPath]) {
+        NSLog(@"[DirBrowserDelegate] DESELECTING path: %@", toggledPath);
+        [self.customSelectedPaths removeObject:toggledPath];
+    } else {
+        NSLog(@"[DirBrowserDelegate] SELECTING path: %@", toggledPath);
+        [self.customSelectedPaths addObject:toggledPath];
+    }
+    
+    NSLog(@"[DirBrowserDelegate] Current custom selected paths (%lu): %@", (unsigned long)self.customSelectedPaths.count, self.customSelectedPaths);
+    [_b reloadColumn:col];
+}
+
+- (void)clearCustomSelection {
+    if (self.customSelectedPaths.count > 0) {
+        NSLog(@"[DirBrowserDelegate] clearCustomSelection");
+        [self.customSelectedPaths removeAllObjects];
+        self.customSelectedColumn = -1;
+        for (NSInteger c = 0; c <= [_b lastColumn]; c++) {
+            [_b reloadColumn:c];
+        }
+    }
+}
+
+- (NSArray<NSString *> *)selectedPaths {
+    if (self.customSelectedPaths.count > 1) {
+        NSLog(@"[DirBrowserDelegate] selectedPaths returning %lu CUSTOM paths", (unsigned long)self.customSelectedPaths.count);
+        return [self.customSelectedPaths allObjects];
+    }
+    if (!_b.loaded) return @[ [self path] ];
+    NSInteger col = _b.selectedColumn;
+    if (col < 0) return @[];
+    NSIndexSet *selectedRows = [_b selectedRowIndexesInColumn:col];
+    if (selectedRows.count <= 1) {
+        return @[ [self path] ];
+    }
+    NSMutableArray *paths = [NSMutableArray arrayWithCapacity:selectedRows.count];
+    NSString *parentBrowserPath = (col > 0) ? [_b pathToColumn:col] : @"/";
+    [selectedRows enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+        NSString *filename = self->colsInternal[col][idx];
+        NSString *bPath;
+        if ([parentBrowserPath isEqualToString:@"/"]) {
+            bPath = [@"/" stringByAppendingString:filename];
+        } else {
+            bPath = [parentBrowserPath stringByAppendingPathComponent:filename];
+        }
+        [paths addObject:[self browserpath2syspath:bPath]];
+    }];
+    return paths;
+}
+
 -(void)setPathAndInitBrowser:(NSString *)s {
 	browserInited = NO;
 	[self setPath:s];
@@ -358,6 +448,12 @@ static NSString *FirstPathComponent(NSString *s) {
 		if (IsAliasFilePath([resolvedDir stringByAppendingPathComponent:filename]))
 			[cell setTag:1]; // show aliases/symlinks in italics
 	}
+    if ([cell respondsToSelector:@selector(setIsCustomSelected:)]) {
+        NSString *p = [self pathForRow:row inColumn:column];
+        BOOL isSel = [self.customSelectedPaths containsObject:p];
+        NSLog(@"[DirBrowserDelegate] willDisplayCell row=%ld col=%ld path=%@ isCustomSelected=%d", (long)row, (long)column, p, isSel);
+        [cell setValue:@(isSel) forKey:@"isCustomSelected"];
+    }
 }
 
 static BOOL IsVolume(NSString *path) {

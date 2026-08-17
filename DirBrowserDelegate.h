@@ -14,4 +14,9 @@
 @property (nonatomic, weak) IBOutlet NSBrowser *b;
 @property (nonatomic, weak) NSMutableSet *revealedDirectories;
 @property (readonly) NSString *currentResolvedPath; // basically a thread-safe copy saved from the last time the action was sent
+@property (nonatomic, strong) NSMutableSet<NSString *> *customSelectedPaths;
+@property (nonatomic, assign) NSInteger customSelectedColumn;
+- (void)toggleSelectionForRow:(NSNumber *)rowObj inColumn:(NSNumber *)colObj;
+- (void)clearCustomSelection;
+@property (nonatomic, readonly) NSArray<NSString *> *selectedPaths;
 @end

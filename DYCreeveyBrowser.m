@@ -17,6 +17,7 @@
 	NSString *title;
 	NSInteger _tag;
 }
+@property (nonatomic, assign) BOOL isCustomSelected;
 // maintains a title for display (sep. from stringValue), and draws it
 @end
 
@@ -29,8 +30,11 @@
 - (NSString *)title {
 	return title;
 }
-
 - (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView *)controlView {
+    if (self.isCustomSelected && !self.isHighlighted && !self.state) {
+        [[NSColor selectedTextBackgroundColor] set];
+        NSRectFill(cellFrame);
+    }
 	NSString *myStringValue = self.stringValue;
 	self.stringValue = title ?: @"";
 	if (_tag > 0) {
@@ -54,6 +58,46 @@
 }
 @end
 @implementation DYCreeveyBrowserMatrix
+- (instancetype)initWithFrame:(NSRect)frameRect mode:(NSMatrixMode)aMode cellClass:(Class)factoryId numberOfRows:(NSInteger)rowsHigh numberOfColumns:(NSInteger)colsWide {
+    self = [super initWithFrame:frameRect mode:NSListModeMatrix cellClass:factoryId numberOfRows:rowsHigh numberOfColumns:colsWide];
+    if (self) {
+        self.allowsEmptySelection = NO;
+    }
+    return self;
+}
+
+- (void)mouseDown:(NSEvent *)e {
+    DYCreeveyBrowser *browser = (DYCreeveyBrowser *)[self enclosingBrowser];
+    id delegate = browser.delegate;
+    
+    if ((e.modifierFlags & NSEventModifierFlagCommand) != 0 || (e.modifierFlags & NSEventModifierFlagShift) != 0) {
+        NSLog(@"[DYCreeveyBrowserMatrix] mouseDown intercepted with Cmd or Shift. modifiers=%lu", (unsigned long)e.modifierFlags);
+        NSPoint pt = [self convertPoint:e.locationInWindow fromView:nil];
+        NSInteger row, matrixCol;
+        if ([self getRow:&row column:&matrixCol forPoint:pt]) {
+            NSInteger browserCol = [browser columnOfMatrix:self];
+            NSLog(@"[DYCreeveyBrowserMatrix] mapped to row=%ld, browserCol=%ld. Calling toggleSelection", (long)row, (long)browserCol);
+            if ([delegate respondsToSelector:@selector(toggleSelectionForRow:inColumn:)]) {
+                [delegate performSelector:@selector(toggleSelectionForRow:inColumn:) withObject:@(row) withObject:@(browserCol)];
+            } else {
+                NSLog(@"[DYCreeveyBrowserMatrix] ERROR: delegate does not respond to toggleSelectionForRow:inColumn:");
+            }
+            [self setNeedsDisplay:YES];
+            [browser sendAction];
+            return;
+        } else {
+            NSLog(@"[DYCreeveyBrowserMatrix] failed to get row/col for point");
+        }
+    } else {
+        NSLog(@"[DYCreeveyBrowserMatrix] normal mouseDown (no Cmd/Shift). Clearing custom selection");
+    }
+    
+    if ([delegate respondsToSelector:@selector(clearCustomSelection)]) {
+        [delegate performSelector:@selector(clearCustomSelection)];
+    }
+    [super mouseDown:e];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
 	if (menuItem.action == @selector(selectAll:)) return YES;
 	if ([menuItem.target isKindOfClass:[DYCreeveyBrowser class]]) return YES;
@@ -139,12 +183,22 @@
 		[self setCellClass:[DYBrowserCell class]];
 		[self.cellPrototype setFont:[NSFont systemFontOfSize:NSFont.smallSystemFontSize]];
 		self.allowsEmptySelection = NO;
+		self.allowsMultipleSelection = YES;
 		self.columnResizingType = NSBrowserUserColumnResizing;
 		self.prefersAllColumnUserResizing = NO;
 		
 		[self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
 	}
 	return self;
+}
+
+- (void)awakeFromNib {
+    [super awakeFromNib];
+    self.allowsEmptySelection = NO;
+    self.allowsMultipleSelection = YES;
+    self.columnResizingType = NSBrowserUserColumnResizing;
+    self.prefersAllColumnUserResizing = NO;
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
 }
 
 - (BOOL)sendAction {

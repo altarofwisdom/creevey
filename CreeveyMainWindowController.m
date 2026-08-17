@@ -277,6 +277,7 @@ typedef struct {
 	imgMatrix.cellWidth = [u floatForKey:@"thumbCellWidth"];
 	self.window.restorationClass = [CreeveyController class];
 	
+	[dirBrowser setAllowsMultipleSelection:YES];
 	dirBrowserDelegate = dirBrowser.delegate;
 	dirBrowserDelegate.revealedDirectories = appDelegate.revealedDirectories;
 
@@ -644,7 +645,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 		if (!filenamesDone || !loadingDone) //[imgMatrix numCells] < [filenames count])
 			[NSThread detachNewThreadSelector:@selector(loadImages:)
 									 toTarget:self
-								   withObject:filenamesDone ? [dirBrowserDelegate path] : nil];
+								   withObject:filenamesDone ? [dirBrowserDelegate selectedPaths] : nil];
 		// must check filenamesDone in case interrupted
 		[self updateStatusFld];
 		if (imgMatrix.numCells == 0)
@@ -709,8 +710,8 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 }
 
 #pragma mark load thread
-- (void)loadImages:(NSString *)thePath { // called in a separate thread
-										 //NSLog(@"loadImages thread started for %@", thePath);
+- (void)loadImages:(id)thePathsObj { // called in a separate thread
+	NSArray *pathsArray = [thePathsObj isKindOfClass:[NSArray class]] ? thePathsObj : (thePathsObj ? @[thePathsObj] : nil);
 	// assume (incorrectly?) that threads will be executed in the order detached
 	// better to set in loadDir and pass it in?
 	NSTimeInterval myThreadTime;
@@ -726,9 +727,10 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			return;
 		}
 		stopCaching = 0;
-		NSThread.currentThread.name = [NSString stringWithFormat:@"loadImages:%@", thePath.lastPathComponent];
+        NSString *firstName = [pathsArray.firstObject lastPathComponent];
+		NSThread.currentThread.name = [NSString stringWithFormat:@"loadImages:%@", firstName];
 
-		NSUInteger i = 0;
+		__block NSUInteger i = 0;
 		NSString *loadingMsg = NSLocalizedString(@"Getting filenames...", @"");
 		//NSTimeInterval imgloadstarttime = NSDate.timeIntervalSinceReferenceDate;
 	
@@ -736,7 +738,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			[imgMatrix removeAllImages];
 		});
 		NSMutableSet *filesForSlideshow = startSlideshowWhenReady ? [NSMutableSet setWithCapacity:filesBeingOpened.count] : nil;
-		if (thePath) {
+		if (pathsArray.count) {
 			dispatch_async(dispatch_get_main_queue(), ^{
 				[_fileWatcher stop];
 			});
@@ -744,34 +746,39 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			[self clearImageCacheQueue];
 			ClearExifDateCache();
 			BOOL recurseSubfolders = self.wantsSubfolders;
-			id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
-				[self updateStatusOnMainThread:^NSString *{
-					return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
-				}];
-			});
-			for (NSURL *url in e) {
-				@autoreleasepool {
-					if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
-						continue;
-					if ([appDelegate shouldShowFile:url]) {
-						NSString *aPath = url.path;
-                        if ([aPath containsString:@"::"]) {
-                            NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
+            NSLog(@"[CreeveyMainWindowController] loadImages: starting with %lu paths: %@", (unsigned long)pathsArray.count, pathsArray);
+            for (NSString *thePath in pathsArray) {
+                if (stopCaching) break;
+                NSLog(@"[CreeveyMainWindowController] Scanning directory: %@", thePath);
+                id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
+                    [self updateStatusOnMainThread:^NSString *{
+                        return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
+                    }];
+                });
+                for (NSURL *url in e) {
+                    @autoreleasepool {
+                        if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
+                            continue;
+                        if ([appDelegate shouldShowFile:url]) {
+                            NSString *aPath = url.path;
+                            if ([aPath containsString:@"::"]) {
+                                NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
+                            }
+                            [filenames addObject:aPath];
+                            if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
+                                [filesForSlideshow addObject:aPath];
+                            if ((++i & 127) == 0)
+                                [self updateStatusOnMainThread:^NSString *{
+                                    return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i];
+                                }];
                         }
-						[filenames addObject:aPath];
-						if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
-							[filesForSlideshow addObject:aPath];
-						if ((++i & 127) == 0)
-							[self updateStatusOnMainThread:^NSString *{
-								return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i];
-							}];
-					}
-					if (stopCaching) {
-						[filenames removeAllObjects]; // so it fails count > 0 test below
-						break;
-					}
-				}
-			}
+                        if (stopCaching) {
+                            [filenames removeAllObjects]; // so it fails count > 0 test below
+                            break;
+                        }
+                    }
+                }
+            }
 		}
 		if (filenames.count) {
 			[self updateStatusOnMainThread:^NSString *{
@@ -884,17 +891,18 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 		 }*/
 		if (myThreadTime == lastThreadTime) {
 			[self performSelectorOnMainThread:@selector(updateStatusFld) withObject:nil waitUntilDone:NO];
-			if (thePath)
+			if (pathsArray.count > 0) {
 				dispatch_async(dispatch_get_main_queue(), ^{
-					[_fileWatcher watchDirectory:thePath];
+                    NSString *watchPath = pathsArray.count > 1 ? [pathsArray.firstObject stringByDeletingLastPathComponent] : pathsArray.firstObject;
+					[_fileWatcher watchDirectory:watchPath];
 				});
+            }
 		}
 		if (loadingDone && filesBeingOpened.count) {
 			[filesBeingOpened removeAllObjects];
 			if (myThreadTime == lastThreadTime && selectedIndexes.count)
 				dispatch_async(dispatch_get_main_queue(), ^{
-					if ([thePath isEqualToString:dirBrowserDelegate.currentResolvedPath])
-						[imgMatrix scrollToFirstSelected:selectedIndexes];
+                    [imgMatrix scrollToFirstSelected:selectedIndexes];
 				});
 		}
 		[loadImageLock unlock];
@@ -907,6 +915,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	filenamesDone = NO;
 	currCat = 0;
 	slidesBtn.enabled = NO;
+	NSArray *selectedPaths = [dirBrowserDelegate selectedPaths];
 	NSString *currentPath = [dirBrowserDelegate path];
 	_subfoldersButton.enabled = ![currentPath isEqualToString:@"/"]; // let's not ever load up the entire file system
 	if (self.wantsSubfolders && sender) { // sender is dirBrowserDelegate when non-nil
@@ -916,9 +925,14 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 		}
 	}
 	[self updateStatusString:NSLocalizedString(@"Getting filenames...", @"")];
-	[self.window setTitleWithRepresentedFilename:currentPath];
+	if (selectedPaths.count > 1) {
+		[self.window setTitle:[NSString stringWithFormat:@"%lu folders", (unsigned long)selectedPaths.count]];
+		[self.window setRepresentedFilename:currentPath];
+	} else {
+		[self.window setTitleWithRepresentedFilename:currentPath];
+	}
 	[NSThread detachNewThreadSelector:@selector(loadImages:)
-							 toTarget:self withObject:currentPath];
+							 toTarget:self withObject:selectedPaths];
 }
 
 - (IBAction)setRecurseSubfolders:(id)sender {

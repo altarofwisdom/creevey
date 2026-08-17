@@ -1485,12 +1485,15 @@ static void SendAction(NSMenuItem *sender) {
 	// do this here, not in windowChanged, to avoid app switch problems
 	if (creeveyWindows.count && exifWasVisible)
 		[exifTextView.window orderFront:nil];
-	if (creeveyWindows.count && frontWindow.currentSelection.count <= 1) {
+	if (creeveyWindows.count) {
 		NSArray *a = frontWindow.displayedFilenames;
-		NSUInteger i = slidesWindow.currentIndex;
-		if (i < a.count
-			&& [a[i] isEqualToString:slidesWindow.currentFile])
-			[frontWindow selectIndex:i];
+        NSString *currentFile = slidesWindow.currentFile;
+        if (currentFile) {
+            NSUInteger idx = [a indexOfObject:currentFile];
+            if (idx != NSNotFound) {
+                [frontWindow selectIndex:idx];
+            }
+        }
 	}
 }
 - (void)windowDidChangeBackingProperties:(NSNotification *)notification {

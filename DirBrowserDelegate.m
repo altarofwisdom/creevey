@@ -203,6 +203,7 @@ static NSString *FirstPathComponent(NSString *s) {
     if (!self.customSelectedPaths) {
         self.customSelectedPaths = [NSMutableSet set];
         self.customSelectedColumn = -1;
+        self.customSelectedAnchorRow = -1;
     }
     
     // If clicking in a different column than the current multiple selection, clear it!
@@ -214,6 +215,7 @@ static NSString *FirstPathComponent(NSString *s) {
         }
     }
     self.customSelectedColumn = col;
+    self.customSelectedAnchorRow = row;
 
     // Check if there is a single native selection that we should inherit
     if (self.customSelectedPaths.count == 0) {
@@ -221,19 +223,60 @@ static NSString *FirstPathComponent(NSString *s) {
         if (nativePath) {
             NSLog(@"[DirBrowserDelegate] custom selection init - inheriting native path: %@", nativePath);
             [self.customSelectedPaths addObject:nativePath];
+            self.customSelectedAnchorRow = [_b selectedRowInColumn:col]; // fallback anchor
         }
     }
     
     NSString *toggledPath = [self pathForRow:row inColumn:col];
     if ([self.customSelectedPaths containsObject:toggledPath]) {
         NSLog(@"[DirBrowserDelegate] DESELECTING path: %@", toggledPath);
-        [self.customSelectedPaths removeObject:toggledPath];
+        if (toggledPath) [self.customSelectedPaths removeObject:toggledPath];
     } else {
         NSLog(@"[DirBrowserDelegate] SELECTING path: %@", toggledPath);
-        [self.customSelectedPaths addObject:toggledPath];
+        if (toggledPath) [self.customSelectedPaths addObject:toggledPath];
     }
     
     NSLog(@"[DirBrowserDelegate] Current custom selected paths (%lu): %@", (unsigned long)self.customSelectedPaths.count, self.customSelectedPaths);
+    [_b reloadColumn:col];
+}
+
+- (void)shiftSelectionToRow:(NSNumber *)rowObj inColumn:(NSNumber *)colObj {
+    NSInteger targetRow = [rowObj integerValue];
+    NSInteger col = [colObj integerValue];
+    
+    if (!self.customSelectedPaths) {
+        self.customSelectedPaths = [NSMutableSet set];
+        self.customSelectedColumn = -1;
+        self.customSelectedAnchorRow = -1;
+    }
+    
+    if (self.customSelectedPaths.count == 0 || self.customSelectedColumn != col || self.customSelectedAnchorRow == -1) {
+        // We are starting a fresh custom selection, maybe from a previous native selection
+        NSString *nativePath = [self path];
+        if (nativePath && _b.selectedColumn == col) {
+            NSLog(@"[DirBrowserDelegate] shift selection init - inheriting native path: %@", nativePath);
+            [self.customSelectedPaths addObject:nativePath];
+            self.customSelectedColumn = col;
+            self.customSelectedAnchorRow = [_b selectedRowInColumn:col];
+        } else {
+            // No valid native selection in this column, fallback to just toggle
+            [self toggleSelectionForRow:rowObj inColumn:colObj];
+            return;
+        }
+    }
+    
+    NSInteger startRow = MIN(self.customSelectedAnchorRow, targetRow);
+    NSInteger endRow = MAX(self.customSelectedAnchorRow, targetRow);
+    
+    // We add all paths from startRow to endRow
+    for (NSInteger r = startRow; r <= endRow; r++) {
+        NSString *p = [self pathForRow:r inColumn:col];
+        if (p) {
+            [self.customSelectedPaths addObject:p];
+        }
+    }
+    
+    NSLog(@"[DirBrowserDelegate] Shift-selected rows %ld to %ld. Total paths: %lu", (long)startRow, (long)endRow, (unsigned long)self.customSelectedPaths.count);
     [_b reloadColumn:col];
 }
 
@@ -469,6 +512,13 @@ static BOOL IsVolume(NSString *path) {
 // from DYBrowser's sendAction: method, or (if you change the path without calling sendAction:) you can call this directly
 // We watch for any part of our selected path in case it gets renamed or deleted. We currently do not watch for changes (or additions) to other files in those directories.
 - (void)browserWillSendAction:(NSBrowser *)b {
+    NSArray<NSString *> *allPaths = [self selectedPaths];
+    NSMutableArray<NSString *> *resolvedPaths = [NSMutableArray arrayWithCapacity:allPaths.count];
+    for (NSString *p in allPaths) {
+        [resolvedPaths addObject:ResolveAliasesInPath(p)];
+    }
+    _currentResolvedPaths = [resolvedPaths copy];
+    
 	NSString *bPath = b.path;
 	NSString *newPath = [self browserpath_to_unresolvedsyspath:bPath];
 	if ([currPath isEqualToString:newPath]) return;
@@ -503,6 +553,30 @@ static BOOL IsVolume(NSString *path) {
 
 	self.currPath = newPath;
 	_currentResolvedPath = ResolveAliasesInPath(newPath);
+    
+    // update currentResolvedPaths to capture all selected directories
+    _currentResolvedPaths = [self selectedPaths];
+    NSMutableArray<NSString *> *finalResolved = [NSMutableArray arrayWithCapacity:_currentResolvedPaths.count];
+    
+    NSString *cachedParent = nil;
+    NSString *cachedResolvedParent = nil;
+    
+    for (NSString *p in _currentResolvedPaths) {
+        NSString *parent = p.stringByDeletingLastPathComponent;
+        if (![parent isEqualToString:cachedParent]) {
+            cachedParent = parent;
+            cachedResolvedParent = ResolveAliasesInPath(parent);
+        }
+        
+        NSString *lastComponent = p.lastPathComponent;
+        NSString *fullResolved = [cachedResolvedParent stringByAppendingPathComponent:lastComponent];
+        if (IsAliasFilePath(fullResolved)) {
+            fullResolved = ResolveAliasToPath(fullResolved);
+        }
+        [finalResolved addObject:fullResolved];
+    }
+    _currentResolvedPaths = [finalResolved copy];
+    
 	NSString *filePath = IsVolume(currPath) ? currPath : [ResolveAliasesInPath(currPath.stringByDeletingLastPathComponent) stringByAppendingPathComponent:currPath.lastPathComponent];
 	self.currFileRef = [NSURL fileURLWithPath:filePath].fileReferenceURL;
 }

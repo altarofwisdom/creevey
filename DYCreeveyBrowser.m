@@ -76,11 +76,15 @@
         NSInteger row, matrixCol;
         if ([self getRow:&row column:&matrixCol forPoint:pt]) {
             NSInteger browserCol = [browser columnOfMatrix:self];
-            NSLog(@"[DYCreeveyBrowserMatrix] mapped to row=%ld, browserCol=%ld. Calling toggleSelection", (long)row, (long)browserCol);
-            if ([delegate respondsToSelector:@selector(toggleSelectionForRow:inColumn:)]) {
-                [delegate performSelector:@selector(toggleSelectionForRow:inColumn:) withObject:@(row) withObject:@(browserCol)];
+            BOOL isShift = (e.modifierFlags & NSEventModifierFlagShift) != 0;
+            if (isShift) {
+                if ([delegate respondsToSelector:@selector(shiftSelectionToRow:inColumn:)]) {
+                    [delegate performSelector:@selector(shiftSelectionToRow:inColumn:) withObject:@(row) withObject:@(browserCol)];
+                }
             } else {
-                NSLog(@"[DYCreeveyBrowserMatrix] ERROR: delegate does not respond to toggleSelectionForRow:inColumn:");
+                if ([delegate respondsToSelector:@selector(toggleSelectionForRow:inColumn:)]) {
+                    [delegate performSelector:@selector(toggleSelectionForRow:inColumn:) withObject:@(row) withObject:@(browserCol)];
+                }
             }
             [self setNeedsDisplay:YES];
             [browser sendAction];

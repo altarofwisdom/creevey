@@ -736,8 +736,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	[self selectionNeedsDisplay:n];
 	// round down for better auto-scrolling
 	r.size.height = (int)r.size.height;
-	if (![self mouse:r.origin inRect:self.visibleRect])
-		[self scrollRectToVisible:r];
+	[self scrollRectToVisible:r];
 }
 - (void)scrollToFirstSelected:(NSIndexSet *)x {
 	[selectedIndexes addIndexes:x];

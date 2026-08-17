@@ -98,6 +98,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	NSUInteger currentIndex;
 	NSUInteger lastIndex; // for outside access to last slide shown
 	
+	BOOL _isDisplayingImage;
 	NSTextView *helpFld;
 	NSImageView *loopImageView;
 	
@@ -815,9 +816,14 @@ scheduledTimerWithTimeInterval:timerIntvl
 }
 
 - (void)displayImage {
+	if (_isDisplayingImage) return; // Prevent re-entrancy from waitUntilExit spinning the run loop
+	
 	if (currentIndex == NSNotFound) return; // in case called after slideshow ended
 	
-	[_upcomingQueue cancelAllOperations];
+	_isDisplayingImage = YES;
+	
+	@try {
+		[_upcomingQueue cancelAllOperations];
 	
 	if (currentIndex == filenames.count) {
 		[self endSlideshow];
@@ -952,6 +958,9 @@ scheduledTimerWithTimeInterval:timerIntvl
 		[_upcomingQueue addOperationWithBlock:^{
 			[imgCache cacheFile:aPath fullSize:q];
 		}];
+	}
+	} @finally {
+		_isDisplayingImage = NO;
 	}
 }
 

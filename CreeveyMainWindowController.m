@@ -421,9 +421,17 @@ typedef struct {
 }
 
 - (BOOL)pathIsVisibleThreaded:(NSString *)filename {
-	NSString *browserPath = dirBrowserDelegate.currentResolvedPath;
-	if (self.wantsSubfolders) return [filename hasPrefix:[browserPath stringByAppendingString:@"/"]];
-	return [filename.stringByDeletingLastPathComponent isEqualToString:browserPath];
+    NSArray<NSString *> *browserPaths = dirBrowserDelegate.currentResolvedPaths;
+    if (!browserPaths || browserPaths.count == 0) return NO;
+    
+    for (NSString *browserPath in browserPaths) {
+        if (self.wantsSubfolders) {
+            if ([filename hasPrefix:[browserPath stringByAppendingString:@"/"]]) return YES;
+        } else {
+            if ([filename.stringByDeletingLastPathComponent isEqualToString:browserPath]) return YES;
+        }
+    }
+    return NO;
 }
 
 - (void)updateDefaults {
@@ -749,8 +757,9 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
             NSLog(@"[CreeveyMainWindowController] loadImages: starting with %lu paths: %@", (unsigned long)pathsArray.count, pathsArray);
             for (NSString *thePath in pathsArray) {
                 if (stopCaching) break;
-                NSLog(@"[CreeveyMainWindowController] Scanning directory: %@", thePath);
-                id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
+                NSString *resolvedPath = ResolveAliasToPath(thePath);
+                NSLog(@"[CreeveyMainWindowController] Scanning directory: %@", resolvedPath);
+                id<NSFastEnumeration> e = CreeveyEnumerator(resolvedPath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
                     [self updateStatusOnMainThread:^NSString *{
                         return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
                     }];

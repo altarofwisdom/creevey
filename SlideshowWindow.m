@@ -75,6 +75,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 
 @end
 
+#import "DYWrappingMatrix.h"
 
 @implementation SlideshowWindow
 {
@@ -196,6 +197,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	infoFld.bezeled = NO;
 	infoFld.editable = NO;
 	infoFld.selectable = NO;
+	infoFld.refusesFirstResponder = YES;
 	
 	
 		cachingIndicatorFld = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,200,20)];
@@ -207,6 +209,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 		cachingIndicatorFld.bezeled = NO;
 		cachingIndicatorFld.editable = NO;
 		cachingIndicatorFld.selectable = NO;
+		cachingIndicatorFld.refusesFirstResponder = YES;
 	    cachingIndicatorFld.stringValue = @"";
 	    
 	    cachingIndicatorTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(updateCachingIndicator) userInfo:nil repeats:YES];
@@ -217,6 +220,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 	catsFld.backgroundColor = NSColor.grayColor;
 	catsFld.bezeled = NO;
 	catsFld.editable = NO; // **
+	catsFld.refusesFirstResponder = YES;
 	catsFld.hidden = YES;
 	
 	NSSize s = imgView.bounds.size;
@@ -816,13 +820,7 @@ scheduledTimerWithTimeInterval:timerIntvl
 	[_upcomingQueue cancelAllOperations];
 	
 	if (currentIndex == filenames.count) {
-		catsFld.hidden = YES;
-		infoFld.hidden = NO;
-		infoFld.stringValue = NSLocalizedString(@"End of slideshow (last file was deleted)", @"");
-		[infoFld sizeToFit];
-		exifFld.string = @"";
-		for (DYImageView *v in mosaicViews) v.image = nil;
-		self.title = NSProcessInfo.processInfo.processName;
+		[self endSlideshow];
 		return;
 	}
 	
@@ -1188,6 +1186,23 @@ scheduledTimerWithTimeInterval:timerIntvl
 		c = NSLeftArrowFunctionKey;
 	}
 	DYImageInfo *obj;
+	// keyCode 51 is Backspace, 117 is Forward Delete
+	if (e.keyCode == 51 || e.keyCode == 117 || c == NSBackspaceCharacter || c == NSDeleteCharacter || c == NSDeleteFunctionKey) {
+		if (_mosaicCount > 1) {
+			NSAlert *alert = [[NSAlert alloc] init];
+			alert.messageText = [NSString stringWithFormat:@"(KeyDown) Impossible de supprimer : _mosaicCount est à %ld.", (long)_mosaicCount];
+			[alert runModal];
+		} else {
+			if ([NSApp.delegate respondsToSelector:@selector(moveToTrash:)]) {
+				[NSApp.delegate performSelector:@selector(moveToTrash:) withObject:nil];
+			} else {
+				NSAlert *alert = [[NSAlert alloc] init];
+				alert.messageText = @"(KeyDown) NSApp.delegate ne répond pas à moveToTrash: !";
+				[alert runModal];
+			}
+		}
+		return;
+	}
 	switch (c) {
 		case '!':
 			[self setTimer:0.5];
@@ -1324,7 +1339,35 @@ scheduledTimerWithTimeInterval:timerIntvl
 				[self saveZoomAndLoadFullSize:obj];
 			}
 			return YES;
+		case NSBackspaceCharacter:
+		case NSDeleteCharacter:
+		case NSDeleteFunctionKey:
+			if (e.keyCode == 51 || e.keyCode == 117 || c == NSBackspaceCharacter || c == NSDeleteCharacter || c == NSDeleteFunctionKey) {
+				if (_mosaicCount > 1) {
+					NSAlert *alert = [[NSAlert alloc] init];
+					alert.messageText = [NSString stringWithFormat:@"Impossible de supprimer : le diaporama affiche plusieurs images (%ld).", (long)_mosaicCount];
+					[alert runModal];
+				} else {
+					if ([NSApp.delegate respondsToSelector:@selector(moveToTrash:)]) {
+						[NSApp.delegate performSelector:@selector(moveToTrash:) withObject:nil];
+					}
+				}
+				return YES;
+			}
+			return [super performKeyEquivalent:e];
 		default:
+			if (e.keyCode == 51 || e.keyCode == 117) {
+				if (_mosaicCount > 1) {
+					NSAlert *alert = [[NSAlert alloc] init];
+					alert.messageText = [NSString stringWithFormat:@"Impossible de supprimer : le diaporama affiche plusieurs images (%ld).", (long)_mosaicCount];
+					[alert runModal];
+				} else {
+					if ([NSApp.delegate respondsToSelector:@selector(moveToTrash:)]) {
+						[NSApp.delegate performSelector:@selector(moveToTrash:) withObject:nil];
+					}
+				}
+				return YES;
+			}
 			return [super performKeyEquivalent:e];
 	}
 }
@@ -1480,6 +1523,23 @@ scheduledTimerWithTimeInterval:timerIntvl
 
 - (void)sendEvent:(NSEvent *)e {
 	NSEventType t = e.type;
+
+	if (t == NSEventTypeKeyDown) {
+		unichar c = e.characters.length > 0 ? [e.characters characterAtIndex:0] : 0;
+		
+		if (e.keyCode == 51 || e.keyCode == 117 || c == NSBackspaceCharacter || c == NSDeleteCharacter || c == NSDeleteFunctionKey) {
+			if (_mosaicCount > 1) {
+				NSAlert *alert = [[NSAlert alloc] init];
+				alert.messageText = [NSString stringWithFormat:@"Impossible de supprimer : le diaporama affiche plusieurs images (%ld).", (long)_mosaicCount];
+				[alert runModal];
+			} else {
+				if ([NSApp.delegate respondsToSelector:@selector(moveToTrash:)]) {
+					[NSApp.delegate performSelector:@selector(moveToTrash:) withObject:nil];
+				}
+			}
+			return;
+		}
+	}
 
 	// override to send right clicks to self
 	if (t == NSEventTypeRightMouseDown)	{

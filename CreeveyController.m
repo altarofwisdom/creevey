@@ -14,6 +14,7 @@
 #import "TagManager.h"
 
 #import "DYWrappingMatrix.h"
+
 #import "CreeveyMainWindowController.h"
 #import "DYImageCache.h"
 #import "SlideshowWindow.h"
@@ -645,11 +646,24 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 
 // pass YES to move to trash; pass NO if this was a drag-to-Finder operation
 - (void)removePicsAndTrash:(BOOL)doTrash {
-	// *** to be more efficient, we should change the path in the cache instead of deleting it
-	if (slidesWindow.isMainWindow) {
+	if (slidesWindow.isVisible) {
+		if (slidesWindow.mosaicCount > 1) {
+			NSAlert *alert = [[NSAlert alloc] init];
+			alert.messageText = [NSString stringWithFormat:@"Impossible de supprimer : le diaporama affiche plusieurs images (%ld).", (long)slidesWindow.mosaicCount];
+			[alert runModal];
+			return;
+		}
 		NSString *s = slidesWindow.currentFile;
+		if (!s) {
+			NSAlert *alert = [[NSAlert alloc] init];
+			alert.messageText = @"Impossible de supprimer : aucun fichier actif.";
+			[alert runModal];
+			return;
+		}
 		if ([s containsString:@"::"]) {
-			NSBeep();
+			NSAlert *alert = [[NSAlert alloc] init];
+			alert.messageText = @"Impossible de supprimer : l'image se trouve dans une archive (ZIP, CBZ, etc).";
+			[alert runModal];
 			return;
 		}
 		NSURL *u;
@@ -990,7 +1004,7 @@ enum {
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
 	NSInteger t = menuItem.tag;
 	NSInteger test_t = t;
-	if (!NSApp.mainWindow) {
+	if (!NSApp.mainWindow && !slidesWindow.isVisible) {
 		// menu items with tags only enabled if there's a window
 		return !t;
 	}
@@ -1018,12 +1032,11 @@ enum {
 		case JPEG_OP:
 			// only when slides isn't loading cache!
 			// only if writeable (we just test the first file in the list)
-			writable = slidesWindow.isMainWindow
-				? slidesWindow.currentFile &&
-					slidesWindow.currentImageLoaded &&
-					[NSFileManager.defaultManager isDeletableFileAtPath:
-					 slidesWindow.currentFile]
-				: numSelected > 0 && frontWindow && frontWindow.currentFilesDeletable;
+			if (slidesWindow.isVisible) {
+				writable = slidesWindow.currentFile != nil;
+			} else {
+				writable = numSelected > 0 && frontWindow && frontWindow.currentFilesDeletable;
+			}
 			if (!writable) return NO;
 			if (test_t != JPEG_OP) {
 				if (t == MOVE_TO_AGAIN) return [NSUserDefaults.standardUserDefaults stringForKey:@"lastUsedMoveToFolder"] != nil;

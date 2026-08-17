@@ -1,0 +1,6 @@
+[submodule "UniversalDetector"]
+	path = UniversalDetector
+	url = https://github.com/MacPaw/UniversalDetector.git
+[submodule "XADMaster"]
+	path = XADMaster
+	url = https://github.com/MacPaw/XADMaster.git

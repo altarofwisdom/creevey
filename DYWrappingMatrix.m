@@ -128,7 +128,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
 		@"DYWrappingMatrixBgColor": [NSKeyedArchiver archivedDataWithRootObject:NSColor.controlBackgroundColor requiringSecureCoding:YES error:NULL],
 		@"DYWrappingMatrixAllowMove": @NO,
-		@"DYWrappingMatrixMaxCellWidth": @"160",
+		@"DYWrappingMatrixMaxCellWidth": @"800",
 		@"thumbPadding": @(PADDING),
 	}];
 	
@@ -137,7 +137,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 }
 + (NSSize)maxCellSize {
 	NSInteger w = [NSUserDefaults.standardUserDefaults integerForKey:@"DYWrappingMatrixMaxCellWidth"];
-	return NSMakeSize(w, w*3/4);
+	return NSMakeSize(w, w);
 }
 
 - (id)validRequestorForSendType:(NSString *)sendType
@@ -287,7 +287,11 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		area_w = self_w;
 		area_h = 16 + 2;
 	} else {
-		cellHeight = cellWidth*3/4;
+		if (_cellAspectRatio > 0.1 && _cellAspectRatio < 10.0) {
+			cellHeight = cellWidth * _cellAspectRatio;
+		} else {
+			cellHeight = cellWidth;
+		}
 		numCols = (int)(self_w)/((int)cellWidth + _hPadding/2);
 		if (numCols == 0) numCols = 1;
 		columnSpacing = (self_w - numCols*cellWidth)/numCols;
@@ -759,6 +763,13 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		case NSDownArrowFunctionKey:
 		case NSUpArrowFunctionKey:
 			break;
+		case NSBackspaceCharacter:
+		case NSDeleteCharacter:
+		case NSDeleteFunctionKey:
+			if ([_appDelegate respondsToSelector:@selector(moveToTrash:)]) {
+				[_appDelegate moveToTrash:nil];
+			}
+			return;
 		default:
 			[super keyDown:e];
 			return;
@@ -907,6 +918,10 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 // call this when an image changes (filename is already set)
 - (void)updateImage:(NSImage *)theImage atIndex:(NSUInteger)i {
 	if (i >= numCells) return;
+	if (_cellAspectRatio == 0 && theImage.size.width > 0) {
+		_cellAspectRatio = theImage.size.height / theImage.size.width;
+		[self resize:nil];
+	}
 	images[i] = theImage;
 	[self setNeedsDisplayInRect:[self cellnum2rect:i]];
 }
@@ -921,6 +936,10 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		if (i == NSNotFound) return NO;
 	}
 	if (images[i] != theImage) {
+		if (_cellAspectRatio == 0 && theImage.size.width > 0) {
+			_cellAspectRatio = theImage.size.height / theImage.size.width;
+			[self resize:nil];
+		}
 		images[i] = theImage;
 		[self setNeedsDisplayInRect:[self cellnum2rect:i]];
 		return YES;
@@ -973,6 +992,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 }
 
 - (void)removeAllImages {
+	_cellAspectRatio = 0;
 	numCells = 0;
 	[images removeAllObjects];
 	[filenames removeAllObjects];

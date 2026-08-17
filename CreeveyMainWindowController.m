@@ -127,10 +127,43 @@ static time_t ExifDateFromFile(NSString *s) {
 	return t;
 }
 
+static NSMutableDictionary *gExifDateCache = nil;
+static NSLock *gExifDateCacheLock = nil;
+
+void ClearExifDateCache() {
+    [gExifDateCacheLock lock];
+    [gExifDateCache removeAllObjects];
+    [gExifDateCacheLock unlock];
+}
+
+static time_t CachedExifDateFromFile(NSString *s) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        gExifDateCache = [[NSMutableDictionary alloc] init];
+        gExifDateCacheLock = [[NSLock alloc] init];
+    });
+
+    [gExifDateCacheLock lock];
+    NSNumber *cached = gExifDateCache[s];
+    [gExifDateCacheLock unlock];
+
+    if (cached) {
+        return (time_t)[cached integerValue];
+    }
+    
+    time_t t = ExifDateFromFile(s);
+    
+    [gExifDateCacheLock lock];
+    gExifDateCache[s] = @(t);
+    [gExifDateCacheLock unlock];
+    
+    return t;
+}
+
 - (NSComparisonResult)exifDateCompare:(NSString *)other {
 	time_t aTime, bTime;
-	if ((aTime = ExifDateFromFile(self)) != -1 &&
-		(bTime = ExifDateFromFile(other)) != -1 &&
+	if ((aTime = CachedExifDateFromFile(self)) != -1 &&
+		(bTime = CachedExifDateFromFile(other)) != -1 &&
 		aTime != bTime) {
 		return aTime < bTime ? NSOrderedAscending : NSOrderedDescending;
 	}
@@ -709,6 +742,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			});
 			[filenames removeAllObjects];
 			[self clearImageCacheQueue];
+			ClearExifDateCache();
 			BOOL recurseSubfolders = self.wantsSubfolders;
 			id<NSFastEnumeration> e = CreeveyEnumerator(thePath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
 				[self updateStatusOnMainThread:^NSString *{

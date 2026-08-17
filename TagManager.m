@@ -50,7 +50,7 @@
             return;
         }
         
-        size_t bytesRead = getxattr(fsPath, "com.apple.metadata:_kMDItemUserTags", buffer, size, 0, 0);
+        ssize_t bytesRead = getxattr(fsPath, "com.apple.metadata:_kMDItemUserTags", buffer, size, 0, 0);
         if (bytesRead > 0) {
             NSData *plistData = [NSData dataWithBytesNoCopy:buffer length:bytesRead freeWhenDone:YES];
             NSError *error = nil;

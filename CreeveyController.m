@@ -609,6 +609,17 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 	[NSFileManager.defaultManager trashItemAtURL:url resultingItemURL:newURL error:&error];
 	if (!error)
 		return 1;
+		
+	// Fallback to local .Trash directory if system trash fails
+	NSURL *parentURL = [url URLByDeletingLastPathComponent];
+	NSURL *trashURL = [parentURL URLByAppendingPathComponent:@".Trash"];
+	[NSFileManager.defaultManager createDirectoryAtURL:trashURL withIntermediateDirectories:YES attributes:nil error:nil];
+	NSURL *destURL = [trashURL URLByAppendingPathComponent:url.lastPathComponent];
+	if ([NSFileManager.defaultManager moveItemAtURL:url toURL:destURL error:nil]) {
+		if (newURL) *newURL = destURL;
+		return 1;
+	}
+	
 	NSAlert *alert = [[NSAlert alloc] init];
 	alert.informativeText = [NSString stringWithFormat:NSLocalizedString(@"The file %@ could not be moved to the trash because an error occurred: %@\n\nDo you want to delete the file immediately? This operation cannot be undone!", @""), fullpath.lastPathComponent, error.localizedDescription];
 	alert.icon = [thumbsCache imageForKey:ResolveAliasToPath(fullpath)];
@@ -1492,7 +1503,7 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
 - (BOOL)handledDirectory:(NSURL *)url subfolders:(BOOL)recurse e:(id)e {
 	NSNumber * __autoreleasing val;
 	if (url.hasDirectoryPath) {
-		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"])) {
+		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"] || [url.lastPathComponent isEqualToString:@".Trash"])) {
 			if ([e respondsToSelector:@selector(skipDescendants)]) {
 				[e skipDescendants];
 			}

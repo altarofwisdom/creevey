@@ -74,6 +74,7 @@
 @property (nonatomic) float maxCellWidth;
 @property (nonatomic, readonly) float minCellWidth;
 @property (nonatomic) float cellWidth;
+@property (nonatomic) float cellAspectRatio;
 
 @property (nonatomic) BOOL listViewMode;
 

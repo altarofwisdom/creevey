@@ -130,7 +130,7 @@ static time_t ExifDateFromFile(NSString *s) {
 static NSMutableDictionary *gExifDateCache = nil;
 static NSLock *gExifDateCacheLock = nil;
 
-void ClearExifDateCache() {
+void ClearExifDateCache(void) {
     [gExifDateCacheLock lock];
     [gExifDateCache removeAllObjects];
     [gExifDateCacheLock unlock];
@@ -565,12 +565,52 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	if (!filenamesDone) return;
 	[self removeAllPathsFromAccessedFilesArray];
 	[self clearImageCacheQueue];
-	NSString *s = _fileWatcher.path, *newPath = fileRef.path;
+	NSString *s = _fileWatcher.paths.firstObject, *newPath = fileRef.path;
 	if (newPath == nil) return;
 	[self.window setTitleWithRepresentedFilename:newPath];
 	[filenames changeBase:s toPath:newPath];
 	[displayedFilenames changeBase:s toPath:newPath];
 	[imgMatrix changeBase:s toPath:newPath];
+}
+
+- (void)watcherDirectoryNeedsRescan:(NSString *)dirPath {
+    if (!filenamesDone) return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *contents = [fm contentsOfDirectoryAtPath:dirPath error:nil];
+        NSMutableSet *currentDiskFiles = [NSMutableSet set];
+        for (NSString *file in contents) {
+            NSString *fullPath = [dirPath stringByAppendingPathComponent:file];
+            NSURL *url = [NSURL fileURLWithPath:fullPath isDirectory:NO];
+            if ([self->appDelegate shouldShowFile:url]) {
+                [currentDiskFiles addObject:fullPath];
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableArray *added = [NSMutableArray array];
+            NSMutableArray *removed = [NSMutableArray array];
+            
+            // Check for added files
+            for (NSString *f in currentDiskFiles) {
+                if (![self->filenames containsObject:f]) {
+                    [added addObject:f];
+                }
+            }
+            
+            // Check for removed files
+            for (NSString *f in self->filenames) {
+                if ([f.stringByDeletingLastPathComponent isEqualToString:dirPath]) {
+                    if (![currentDiskFiles containsObject:f]) {
+                        [removed addObject:f];
+                    }
+                }
+            }
+            
+            if (added.count > 0 || removed.count > 0) {
+                [self watcherFiles:added deleted:removed];
+            }
+        });
+    });
 }
 
 - (void)addFile:(NSString *)s atIndex:(NSUInteger)idx {
@@ -902,8 +942,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			[self performSelectorOnMainThread:@selector(updateStatusFld) withObject:nil waitUntilDone:NO];
 			if (pathsArray.count > 0) {
 				dispatch_async(dispatch_get_main_queue(), ^{
-                    NSString *watchPath = pathsArray.count > 1 ? [pathsArray.firstObject stringByDeletingLastPathComponent] : pathsArray.firstObject;
-					[_fileWatcher watchDirectory:watchPath];
+					[_fileWatcher watchDirectories:pathsArray];
 				});
             }
 		}

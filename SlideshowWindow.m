@@ -309,7 +309,7 @@ static BOOL UsingMagicMouse(NSEvent *e) {
 - (void)setFilenames:(NSArray *)files basePath:(NSString *)s wantsSubfolders:(BOOL)b comparator:(NSComparator)block sortOrder:(short int)sortOrder {
 	[self setFilenames:files basePath:s comparator:block sortOrder:sortOrder];
 	_fileWatcher.wantsSubfolders = b;
-	[_fileWatcher watchDirectory:s];
+	[_fileWatcher watchDirectories:@[s]];
 }
 
 - (void)setFilenames:(NSArray *)files basePath:(NSString *)s comparator:(NSComparator)block sortOrder:(short int)sortOrder {
@@ -570,7 +570,7 @@ static NSSize BoundingSizeForScreen(NSScreen *screen) {
 }
 
 - (void)watcherRootChanged:(NSURL *)fileRef {
-	NSString *s = _fileWatcher.path, *newPath = fileRef.path;
+	NSString *s = _fileWatcher.paths.firstObject, *newPath = fileRef.path;
 	if (newPath == nil) {
 		// directory no longer exists!
 		dispatch_async(dispatch_get_main_queue(), ^{

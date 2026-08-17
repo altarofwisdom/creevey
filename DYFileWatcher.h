@@ -12,13 +12,15 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol DYFileWatcherDelegate <NSObject>
 - (void)watcherFiles:(NSArray *)files deleted:(NSArray *)deleted;
 - (void)watcherRootChanged:(NSURL *)fileRef;
+@optional
+- (void)watcherDirectoryNeedsRescan:(NSString *)dirPath;
 @end
 
 @interface DYFileWatcher : NSObject
 @property (nonatomic) BOOL wantsSubfolders;
-@property (nonatomic, readonly) NSString *path;
+@property (nonatomic, readonly) NSArray<NSString *> *paths;
 - (instancetype)initWithDelegate:(id <DYFileWatcherDelegate>)delegate NS_DESIGNATED_INITIALIZER;
-- (void)watchDirectory:(NSString *)thePath;
+- (void)watchDirectories:(NSArray<NSString *> *)paths;
 - (void)stop;
 @end
 

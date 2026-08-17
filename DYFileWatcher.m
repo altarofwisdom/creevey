@@ -10,7 +10,7 @@
 #import "CreeveyController.h"
 
 @interface DYFileWatcher ()
-@property (nonatomic, copy) NSString *path;
+@property (nonatomic, copy) NSArray<NSString *> *paths;
 @property (nonatomic) NSURL *fileRef;
 - (instancetype)init NS_UNAVAILABLE;
 - (void)gotEventPaths:(NSArray *)eventPaths flags:(const FSEventStreamEventFlags *)eventFlags count:(size_t)n;
@@ -40,18 +40,26 @@ static void fseventCallback(ConstFSEventStreamRef streamRef, void *info, size_t 
 	[self stop];
 }
 
-- (void)watchDirectory:(NSString *)s {
+- (void)watchDirectories:(NSArray<NSString *> *)pathsArray {
 	if (stream)
 		[self stop];
-	if ([s.stringByDeletingLastPathComponent isEqualToString:@"/"])
-		return; // just refuse to watch top level directories for now
+	if (pathsArray.count == 0) return;
 	
-	self.path = s;
-	self.fileRef = [NSURL fileURLWithPath:s isDirectory:YES].fileReferenceURL;
+    // Remove root directory from watch list if present
+    NSMutableArray *validPaths = [NSMutableArray array];
+    for (NSString *s in pathsArray) {
+        if (![s.stringByDeletingLastPathComponent isEqualToString:@"/"]) {
+            [validPaths addObject:s];
+        }
+    }
+    if (validPaths.count == 0) return;
+	
+	self.paths = validPaths;
+	self.fileRef = [NSURL fileURLWithPath:validPaths.firstObject isDirectory:YES].fileReferenceURL;
 	appDelegate = (CreeveyController *)NSApp.delegate;
 
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-		FSEventStreamRef newStream = FSEventStreamCreate(NULL, &fseventCallback, &(FSEventStreamContext){0,(__bridge void *)self,NULL,NULL,NULL}, (__bridge CFArrayRef)@[s], kFSEventStreamEventIdSinceNow, 2.0,
+		FSEventStreamRef newStream = FSEventStreamCreate(NULL, &fseventCallback, &(FSEventStreamContext){0,(__bridge void *)self,NULL,NULL,NULL}, (__bridge CFArrayRef)validPaths, kFSEventStreamEventIdSinceNow, 2.0,
 									 kFSEventStreamCreateFlagFileEvents
 									 |kFSEventStreamCreateFlagUseCFTypes
 									 |kFSEventStreamCreateFlagIgnoreSelf
@@ -67,7 +75,7 @@ static void fseventCallback(ConstFSEventStreamRef streamRef, void *info, size_t 
 			}
 		}
 		dispatch_async(dispatch_get_main_queue(), ^{
-			if (![self.path isEqualToString:s]) {
+			if (![self.paths isEqualToArray:validPaths]) {
 				// The path changed while we were creating the stream
 				if (newStream) {
 					FSEventStreamStop(newStream);
@@ -89,14 +97,37 @@ static void fseventCallback(ConstFSEventStreamRef streamRef, void *info, size_t 
 		NSString *s = eventPaths[i];
 		FSEventStreamEventFlags f = eventFlags[i];
 		if (f & (kFSEventStreamEventFlagItemCreated|kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemRemoved|kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemInodeMetaMod)) {
-			if (f & kFSEventStreamEventFlagItemIsDir) continue;
-			if (_wantsSubfolders ? [s hasPrefix:_path] : [s.stringByDeletingLastPathComponent isEqualToString:_path]) {
+			if (f & kFSEventStreamEventFlagItemIsDir) {
+                BOOL matchesPath = NO;
+                for (NSString *watchedPath in _paths) {
+                    if ([s isEqualToString:watchedPath] || (_wantsSubfolders && [s hasPrefix:watchedPath])) {
+                        matchesPath = YES;
+                        break;
+                    }
+                }
+                if (matchesPath && [_delegate respondsToSelector:@selector(watcherDirectoryNeedsRescan:)]) {
+                    [_delegate watcherDirectoryNeedsRescan:s];
+                }
+                continue;
+            }
+            
+            BOOL matchesPath = NO;
+            for (NSString *watchedPath in _paths) {
+                if (_wantsSubfolders ? [s hasPrefix:watchedPath] : [s.stringByDeletingLastPathComponent isEqualToString:watchedPath]) {
+                    matchesPath = YES;
+                    break;
+                }
+            }
+            
+			if (matchesPath) {
 				NSURL *url = [NSURL fileURLWithPath:s isDirectory:NO];
 				if (![appDelegate shouldShowFile:url]) continue;
-				if (0 == access(s.fileSystemRepresentation, R_OK))
+				
+				if (0 == access(s.fileSystemRepresentation, R_OK)) {
 					[files addObject:s];
-				else
+                } else {
 					[deleted addObject:s];
+                }
 			}
 		} else if (f & kFSEventStreamEventFlagRootChanged) {
 			rootChanged = YES;
@@ -108,7 +139,7 @@ static void fseventCallback(ConstFSEventStreamRef streamRef, void *info, size_t 
 		[_delegate watcherRootChanged:_fileRef];
 		if (_fileRef.path != nil) {
 			dispatch_async(dispatch_get_main_queue(), ^{
-				[self watchDirectory:_fileRef.path];
+				[self watchDirectories:self->_paths];
 			});
 		}
 	}

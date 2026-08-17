@@ -211,6 +211,10 @@
                                                         <menuItem title="160" id="733"/>
                                                         <menuItem title="320" id="734"/>
                                                         <menuItem title="512" id="735"/>
+                                                        <menuItem title="800" id="900"/>
+                                                        <menuItem title="1024" id="901"/>
+                                                        <menuItem title="2048" id="902"/>
+                                                        <menuItem title="4096" id="903"/>
                                                     </items>
                                                 </menu>
                                             </popUpButtonCell>

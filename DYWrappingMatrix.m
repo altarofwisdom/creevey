@@ -21,25 +21,20 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	NSRect destinationRect;
 	
 	// size
-	if (sourceSize.width <= boundsRect.size.width
-		&& sourceSize.height <= boundsRect.size.height) {
-		destinationRect.size = sourceSize;
+	float w_ratio, h_ratio;
+	w_ratio = boundsRect.size.width/sourceSize.width;
+	h_ratio = boundsRect.size.height/sourceSize.height;
+	if (w_ratio < h_ratio) { // the side w/ bigger ratio needs to be shrunk
+		destinationRect.size.height = sourceSize.height*w_ratio;
+		destinationRect.size.width = boundsRect.size.width;
 	} else {
-		float w_ratio, h_ratio;
-		w_ratio = boundsRect.size.width/sourceSize.width;
-		h_ratio = boundsRect.size.height/sourceSize.height;
-		if (w_ratio < h_ratio) { // the side w/ bigger ratio needs to be shrunk
-			destinationRect.size.height = sourceSize.height*w_ratio;
-			destinationRect.size.width = boundsRect.size.width;
-		} else {
-			destinationRect.size.width = sourceSize.width*h_ratio;
-			destinationRect.size.height = boundsRect.size.height;
-		}
+		destinationRect.size.width = sourceSize.width*h_ratio;
+		destinationRect.size.height = boundsRect.size.height;
 	}
 	
 	// origin
-	destinationRect.origin.x = round(NSMidX(boundsRect) - destinationRect.size.width/2);
-	destinationRect.origin.y = round(NSMidY(boundsRect) - destinationRect.size.height/2);
+	destinationRect.origin.x = NSMidX(boundsRect) - destinationRect.size.width/2;
+	destinationRect.origin.y = NSMidY(boundsRect) - destinationRect.size.height/2;
 	return destinationRect;
 }
 
@@ -113,6 +108,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	BOOL _respondsToLoadImageForFile, _respondsToSelectionDidChange;
 	NSMutableArray *_movedUrls, *_originPaths;
 	id __weak _appDelegate;
+	BOOL _aspectRatioNeedsUpdate;
 }
 @synthesize delegate, loadingImage;
 @synthesize listViewMode = _listViewMode;
@@ -128,7 +124,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
 		@"DYWrappingMatrixBgColor": [NSKeyedArchiver archivedDataWithRootObject:NSColor.controlBackgroundColor requiringSecureCoding:YES error:NULL],
 		@"DYWrappingMatrixAllowMove": @NO,
-		@"DYWrappingMatrixMaxCellWidth": @"800",
+		@"DYWrappingMatrixMaxCellWidth": @"2048",
 		@"thumbPadding": @(PADDING),
 	}];
 	
@@ -161,7 +157,8 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 {
 	if ((self = [super initWithFrame:frameRect]) != nil) {
 		myCell = [[NSImageCell alloc] initImageCell:nil];
-		myTextCell = [[NSTextFieldCell alloc] init];
+		myCell.imageScaling = NSImageScaleProportionallyUpOrDown;
+		myTextCell = [[NSTextFieldCell alloc] initTextCell:@""];
 		myTextCell.alignment = NSTextAlignmentCenter;
 		images = [[NSMutableArray alloc] initWithCapacity:100];
 		filenames = [[NSMutableArray alloc] initWithCapacity:100];
@@ -287,16 +284,17 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		area_w = self_w;
 		area_h = 16 + 2;
 	} else {
+		numCols = MAX(1, round(self_w / cellWidth));
+		
+		float actualCellWidth = self_w / numCols;
 		if (_cellAspectRatio > 0.1 && _cellAspectRatio < 10.0) {
-			cellHeight = cellWidth * _cellAspectRatio;
+			cellHeight = actualCellWidth * _cellAspectRatio;
 		} else {
-			cellHeight = cellWidth;
+			cellHeight = actualCellWidth;
 		}
-		numCols = (int)(self_w)/((int)cellWidth + _hPadding/2);
-		if (numCols == 0) numCols = 1;
-		columnSpacing = (self_w - numCols*cellWidth)/numCols;
-		area_w = cellWidth + columnSpacing;
-		area_h = cellHeight + _vPadding + textHeight;
+		columnSpacing = 0;
+		area_w = actualCellWidth;
+		area_h = cellHeight + textHeight;
 	}
 }
 - (NSInteger)point2cellnum:(NSPoint)p {
@@ -309,7 +307,11 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	NSUInteger row, col;
 	row = n/numCols;
 	col = n%numCols;
-	return NSMakeRect(area_w*col,area_h*row,area_w, area_h);
+	float x1 = round(area_w * col);
+	float x2 = round(area_w * (col + 1));
+	float y1 = round(area_h * row);
+	float y2 = round(area_h * (row + 1));
+	return NSMakeRect(x1, y1, x2 - x1, y2 - y1);
 }
 - (NSRect)imageRectForIndex:(NSUInteger)n {
 	NSUInteger row, col;
@@ -318,10 +320,15 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	if (_listViewMode) {
 		return NSMakeRect(0, area_h*row, area_w, area_h);
 	}
-	return ScaledCenteredRect([self imageSizeForIndex:n],
-							  NSMakeRect(cellWidth*col + columnSpacing*(col + 0.5),
-										 (cellHeight+textHeight)*row + _vPadding*(row+0.5),
-										 cellWidth, cellHeight)); // rect for cell only
+	
+	// Calculate exact integer boundaries to prevent fractional 1px gaps
+	float x1 = round(area_w * col);
+	float x2 = round(area_w * (col + 1));
+	float y1 = round(area_h * row);
+	float y2 = round(area_h * (row + 1));
+	NSRect exactRect = NSMakeRect(x1, y1, x2 - x1, y2 - y1);
+	
+	return ScaledCenteredRect([self imageSizeForIndex:n], exactRect); // rect for cell only
 }
 
 - (void)selectionNeedsDisplay:(NSUInteger)n {
@@ -611,7 +618,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	[NSBezierPath fillRect:rect];
 	NSUInteger i, row, col;
 	NSRect areaRect = NSMakeRect(0, 0, area_w, area_h);
-	NSRect textCellRect = NSMakeRect(0, 0, area_w, textHeight + _vPadding/2);
+	NSRect textCellRect = NSMakeRect(0, 0, area_w, textHeight);
 	NSRect cellRect;
 	NSWindow *myWindow = self.window;
 	myTextCell.font = _listViewMode ? [NSFont systemFontOfSize:13] : [NSFont systemFontOfSize:cellWidth >= 160 ? 12 : 4+cellWidth/20]; // ranges from 6 to 12: 6 + 6*(cellWidth-40)/(160-40)
@@ -620,7 +627,11 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	for (i=0; i<numCells; ++i) {
 		row = i/numCols;
 		col = i%numCols;
-		areaRect.origin = NSMakePoint(area_w*col, area_h*row);
+		float x1 = round(area_w * col);
+		float x2 = round(area_w * (col + 1));
+		float y1 = round(area_h * row);
+		float y2 = round(area_h * (row + 1));
+		areaRect = NSMakeRect(x1, y1, x2 - x1, y2 - y1);
 		if (![self needsToDrawRect:areaRect]) continue;
 		// color the selection
 		if ([selectedIndexes containsIndex:i]) {
@@ -638,6 +649,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 				if (_respondsToLoadImageForFile && ![requestedFilenames containsObject:filename]) {
 					NSImage *newImage = [delegate wrappingMatrixWantsImageForFile:filename atIndex:i];
 					if (newImage) {
+						[self updateAspectRatioWithImage:newImage atIndex:i];
 						images[i] = newImage;
 						img = newImage;
 					} else {
@@ -659,7 +671,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		}
 		if (textHeight) {
 			textCellRect.origin.x = areaRect.origin.x;
-			textCellRect.origin.y = areaRect.origin.y + area_h - textHeight - _vPadding/2;
+			textCellRect.origin.y = areaRect.origin.y + area_h - textHeight;
 			textCellRect.size.width = areaRect.size.width;
 		}
 		cellRect = [self imageRectForIndex:i];
@@ -915,13 +927,29 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 	return numCells;
 }
 
+- (void)updateAspectRatioWithImage:(NSImage *)theImage atIndex:(NSUInteger)i {
+	if ((_cellAspectRatio == 0 || _aspectRatioNeedsUpdate) && theImage.size.width > 0) {
+		NSSize s = theImage.size;
+		unsigned short o = [self exifOrientationForIndex:i];
+		if (o >= 5 && o <= 8) {
+			s = NSMakeSize(s.height, s.width);
+		}
+		float newRatio = s.height / s.width;
+		_aspectRatioNeedsUpdate = NO;
+		if (fabs(_cellAspectRatio - newRatio) > 0.01) {
+			_cellAspectRatio = newRatio;
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[self resize:nil];
+				[self setNeedsDisplay:YES];
+			});
+		}
+	}
+}
+
 // call this when an image changes (filename is already set)
 - (void)updateImage:(NSImage *)theImage atIndex:(NSUInteger)i {
 	if (i >= numCells) return;
-	if (_cellAspectRatio == 0 && theImage.size.width > 0) {
-		_cellAspectRatio = theImage.size.height / theImage.size.width;
-		[self resize:nil];
-	}
+	[self updateAspectRatioWithImage:theImage atIndex:i];
 	images[i] = theImage;
 	[self setNeedsDisplayInRect:[self cellnum2rect:i]];
 }
@@ -936,10 +964,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 		if (i == NSNotFound) return NO;
 	}
 	if (images[i] != theImage) {
-		if (_cellAspectRatio == 0 && theImage.size.width > 0) {
-			_cellAspectRatio = theImage.size.height / theImage.size.width;
-			[self resize:nil];
-		}
+		[self updateAspectRatioWithImage:theImage atIndex:i];
 		images[i] = theImage;
 		[self setNeedsDisplayInRect:[self cellnum2rect:i]];
 		return YES;
@@ -992,7 +1017,7 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 }
 
 - (void)removeAllImages {
-	_cellAspectRatio = 0;
+	_aspectRatioNeedsUpdate = YES;
 	numCells = 0;
 	[images removeAllObjects];
 	[filenames removeAllObjects];

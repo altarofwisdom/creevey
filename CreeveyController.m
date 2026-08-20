@@ -468,6 +468,60 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 				// ** fail silently
 				//NSLog(@"rot failed!");
 			}
+		} else if ([[resolvedPath pathExtension] caseInsensitiveCompare:@"png"] == NSOrderedSame) {
+			NSURL *url = [NSURL fileURLWithPath:resolvedPath];
+			CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+			if (source) {
+				CFStringRef type = CGImageSourceGetType(source);
+				NSMutableData *destData = [NSMutableData data];
+				CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)destData, type, 1, NULL);
+				if (destination) {
+					NSDictionary *metadata = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
+					NSMutableDictionary *mutableMetadata = [metadata mutableCopy];
+					
+					unsigned short orientation = jinfo.starting_exif_orientation;
+					if (orientation == 0) {
+						NSNumber *val = metadata[(NSString *)kCGImagePropertyOrientation];
+						orientation = val ? [val unsignedShortValue] : 1;
+					}
+					
+					int deg = 0; BOOL flipped = NO;
+					exiforientation_to_components(orientation, &deg, &flipped);
+					
+					switch (jinfo.tinfo.transform) {
+						case 5: // JXFORM_ROT_90
+							deg -= 90;
+							break;
+						case 6: // JXFORM_ROT_180
+							deg += 180;
+							break;
+						case 7: // JXFORM_ROT_270
+							deg += 90;
+							break;
+						case 1: // JXFORM_FLIP_H
+							flipped = !flipped;
+							if (orientation > 4) deg += 180;
+							break;
+						case 2: // JXFORM_FLIP_V
+							flipped = !flipped;
+							if (orientation <= 4) deg += 180;
+							break;
+					}
+					
+					unsigned short newOrientation = components_to_exiforientation(deg, flipped);
+					mutableMetadata[(NSString *)kCGImagePropertyOrientation] = @(newOrientation);
+					
+					CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef)mutableMetadata);
+					if (CGImageDestinationFinalize(destination)) {
+						[destData writeToFile:resolvedPath atomically:YES];
+						[thumbsCache removeImageForKey:resolvedPath];
+						[creeveyWindows makeObjectsPerformSelector:@selector(fileWasChanged:) withObject:s];
+						[slidesWindow uncacheImage:s];
+					}
+					CFRelease(destination);
+				}
+				CFRelease(source);
+			}
 		}
 		if (jpegProgressBar.indeterminate) {
 			[jpegProgressBar stopAnimation:self];

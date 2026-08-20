@@ -1138,6 +1138,18 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			return;
 		}
 	}
+	NSString *chars = e.charactersIgnoringModifiers;
+	if (chars.length > 0) {
+		unichar ch = [chars characterAtIndex:0];
+		if (ch == 'm' || ch == 'M') {
+			NSMenuItem *dummy = [[NSMenuItem alloc] init];
+			dummy.tag = (e.modifierFlags & NSEventModifierFlagOption) != 0 ? 102 : 101;
+			if ([NSApp.delegate respondsToSelector:@selector(transformJpeg:)]) {
+				[NSApp.delegate performSelector:@selector(transformJpeg:) withObject:dummy];
+			}
+			return;
+		}
+	}
 	[super keyDown:e];
 }
 

@@ -781,9 +781,22 @@ static NSRect ScaledCenteredRect(NSSize sourceSize, NSRect boundsRect) {
 				[_appDelegate moveToTrash:nil];
 			}
 			return;
-		default:
+		default: {
+			NSString *chars = e.charactersIgnoringModifiers;
+			if (chars.length > 0) {
+				unichar ch = [chars characterAtIndex:0];
+				if (ch == 'm' || ch == 'M') {
+					NSMenuItem *dummy = [[NSMenuItem alloc] init];
+					dummy.tag = (e.modifierFlags & NSEventModifierFlagOption) != 0 ? 102 : 101;
+					if ([_appDelegate respondsToSelector:@selector(transformJpeg:)]) {
+						[_appDelegate performSelector:@selector(transformJpeg:) withObject:dummy];
+					}
+					return;
+				}
+			}
 			[super keyDown:e];
 			return;
+		}
 	}
 	NSUInteger n;
 	if (selectedIndexes.count == 1) {

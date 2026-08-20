@@ -287,12 +287,14 @@ CA
                             <menuItem isSeparatorItem="YES" id="463">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Flip Horizontal ↔" tag="101" id="464">
+                            <menuItem title="Flip Horizontal ↔" tag="101" keyEquivalent="m" id="464">
+                                <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="transformJpeg:" target="207" id="477"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Flip Vertical ↕" tag="102" id="465">
+                            <menuItem title="Flip Vertical ↕" tag="102" keyEquivalent="m" id="465">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES"/>
                                 <connections>
                                     <action selector="transformJpeg:" target="207" id="478"/>
                                 </connections>

@@ -374,6 +374,57 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 	};
 }
 
+static NSData * RestorePNGTextChunksData(NSData *sourceData, NSData *destData) {
+    if (!sourceData || !destData) return destData;
+    
+    const unsigned char *s = sourceData.bytes;
+    size_t sLen = sourceData.length;
+    
+    NSMutableArray *chunksToCopy = [NSMutableArray array];
+    
+    size_t pos = 8;
+    while (pos + 8 <= sLen) {
+        uint32_t len = (s[pos]<<24) | (s[pos+1]<<16) | (s[pos+2]<<8) | s[pos+3];
+        if (pos + 12 + len > sLen) break;
+        
+        char type[5] = { s[pos+4], s[pos+5], s[pos+6], s[pos+7], 0 };
+        if (strcmp(type, "tEXt") == 0 || strcmp(type, "iTXt") == 0 || strcmp(type, "zTXt") == 0) {
+            [chunksToCopy addObject:[NSData dataWithBytes:s+pos length:len+12]];
+        }
+        pos += len + 12;
+    }
+    
+    if (chunksToCopy.count == 0) return destData;
+    
+    NSMutableData *outData = [NSMutableData data];
+    const unsigned char *d = destData.bytes;
+    size_t dLen = destData.length;
+    
+    if (dLen < 8) return destData;
+    [outData appendBytes:d length:8];
+    pos = 8;
+    
+    BOOL inserted = NO;
+    while (pos + 8 <= dLen) {
+        uint32_t len = (d[pos]<<24) | (d[pos+1]<<16) | (d[pos+2]<<8) | d[pos+3];
+        if (pos + 12 + len > dLen) break;
+        
+        char type[5] = { d[pos+4], d[pos+5], d[pos+6], d[pos+7], 0 };
+        [outData appendBytes:d+pos length:len+12];
+        
+        if (!inserted && strcmp(type, "IHDR") == 0) {
+            for (NSData *chunk in chunksToCopy) {
+                [outData appendData:chunk];
+            }
+            inserted = YES;
+        }
+        
+        pos += len + 12;
+    }
+    
+    return outData;
+}
+
 - (IBAction)transformJpeg:(id)sender {
 	DYJpegtranInfo jinfo;
 	NSInteger t = [sender tag] - 100;
@@ -470,14 +521,14 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 			}
 		} else if ([[resolvedPath pathExtension] caseInsensitiveCompare:@"png"] == NSOrderedSame) {
 			NSURL *url = [NSURL fileURLWithPath:resolvedPath];
-			CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+			NSData *sourceData = [NSData dataWithContentsOfURL:url];
+			CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)sourceData, NULL);
 			if (source) {
 				CFStringRef type = CGImageSourceGetType(source);
 				NSMutableData *destData = [NSMutableData data];
 				CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)destData, type, 1, NULL);
 				if (destination) {
 					NSDictionary *metadata = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
-					NSMutableDictionary *mutableMetadata = [metadata mutableCopy];
 					
 					unsigned short orientation = jinfo.starting_exif_orientation;
 					if (orientation == 0) {
@@ -508,12 +559,16 @@ static void ShowDirectoryContentsIfPossible(NSURL *u) {
 							break;
 					}
 					
-					unsigned short newOrientation = components_to_exiforientation(deg, flipped);
-					mutableMetadata[(NSString *)kCGImagePropertyOrientation] = @(newOrientation);
+					if (deg > 180) deg -= 360;
+					else if (deg <= -180) deg += 360;
 					
-					CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef)mutableMetadata);
+					unsigned short newOrientation = components_to_exiforientation(deg, flipped);
+					NSDictionary *updatedProperties = @{ (NSString *)kCGImagePropertyOrientation: @(newOrientation) };
+					
+					CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef)updatedProperties);
 					if (CGImageDestinationFinalize(destination)) {
-						[destData writeToFile:resolvedPath atomically:YES];
+						NSData *finalData = RestorePNGTextChunksData(sourceData, destData);
+						[finalData writeToFile:resolvedPath atomically:YES];
 						[thumbsCache removeImageForKey:resolvedPath];
 						[creeveyWindows makeObjectsPerformSelector:@selector(fileWasChanged:) withObject:s];
 						[slidesWindow uncacheImage:s];

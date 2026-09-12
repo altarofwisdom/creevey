@@ -1373,9 +1373,10 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			while (YES) {
 				if (visibleQueue.count) {
 					// run through this "pre-approved" array before touching the main queue
-					d = visibleQueue[0];
+					NSUInteger r = arc4random_uniform((uint32_t)visibleQueue.count);
+					d = visibleQueue[r];
 					if ([currState imageWithFileInfoNeedsDisplay:d] || visibleQueue.count == 1) {
-						[visibleQueue removeObjectAtIndex:0];
+						[visibleQueue removeObjectAtIndex:r];
 						//if ([imgMatrix imageWithFileInfoNeedsDisplay:d])
 						//	NSLog(@"processing %@ because needsDisplay", [d objectForKey:@"index"]);
 						//else NSLog(@"processing %@ as last item of priority queue", [d objectForKey:@"index"]);
@@ -1391,7 +1392,9 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 				d = imageCacheQueue[i];
 				//NSLog(@"considering %@ in main loop", [d objectForKey:@"index"]);
 				if (imageCacheQueue.count-1 == i) { // if we've reached the last item of the array, we have to process it
-					[imageCacheQueue removeObjectAtIndex:i];
+					NSUInteger r = arc4random_uniform((uint32_t)imageCacheQueue.count);
+					d = imageCacheQueue[r];
+					[imageCacheQueue removeObjectAtIndex:r];
 					//NSLog(@"processing %@ because it is the last item", [d objectForKey:@"index"]);
 					break;
 				}

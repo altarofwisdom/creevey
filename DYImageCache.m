@@ -1,3 +1,4 @@
+#import "DYExiftags.h"
 //Copyright 2005-2023 Dominic Yu. Some rights reserved.
 //This work is licensed under the Creative Commons
 //Attribution-NonCommercial-ShareAlike License. To view a copy of this
@@ -514,6 +515,11 @@ static void ScaleCGImage(CGImageSourceRef orig, CGSize boundingSize, DYImageInfo
 	}
 	if (result.image == nil)
 		result.image = _fallbackImage;
+	if (result.exifTags == nil) {
+		result.exifTags = [DYExiftags tagsForFile:s moreTags:YES];
+		if (result.exifTags == nil) result.exifTags = @"";
+	}
+
 
 	if (result.image) {
 		[self addImage:result forFile:s];

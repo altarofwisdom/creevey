@@ -26,6 +26,7 @@ typedef NS_ENUM(unsigned char, DYImageQuality) {
 	unsigned short exifOrientation : 4;
 	DYImageQuality quality : 2;
 }
+@property (nonatomic, strong) NSString *exifTags;
 @property (readonly, nonatomic) NSImage *image;
 @property (readonly, nonatomic) NSString *path;
 - (instancetype)init NS_UNAVAILABLE;

@@ -9,7 +9,7 @@
 
 @class DYWrappingMatrix, DYCreeveyBrowser;
 
-@interface CreeveyMainWindowController : NSWindowController <NSWindowDelegate,NSSplitViewDelegate>
+@interface CreeveyMainWindowController : NSWindowController <NSWindowDelegate,NSSplitViewDelegate,NSToolbarDelegate>
 @property (weak) IBOutlet DYCreeveyBrowser *dirBrowser;
 @property (weak) IBOutlet NSButton *slidesBtn;
 @property (weak) IBOutlet DYWrappingMatrix *imgMatrix;

@@ -1,0 +1,10 @@
+--- DYImageCache.m
++++ DYImageCache.m
+@@ -617,6 +617,7 @@
+                 if (cost < 1024) cost = 1024;
+             }
+         }
++        NSLog(@"addImage: cost=%lu, reps=%lu, size=%fx%f for %@", cost, imgInfo.image.representations.count, imgInfo.image.size.width, imgInfo.image.size.height, s.lastPathComponent);
+ 		[images setObject:imgInfo forKey:s cost:cost];
+         if (!wasInCache) {
+             @synchronized(self) { _count++; _totalCost += cost; }

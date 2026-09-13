@@ -203,6 +203,8 @@ typedef struct {
 @property (nonatomic, readonly) NSSplitView *splitView;
 @property BOOL wantsSubfolders;
 @property (nonatomic, strong) NSString *recurseRoot;
+@property (nonatomic, strong) NSString *searchString;
+@property (nonatomic, strong) NSSearchField *searchField;
 @end
 
 @implementation CreeveyMainWindowController
@@ -261,6 +263,11 @@ typedef struct {
 - (void)windowDidLoad {
 	[self.window setFrameUsingName:@"MainWindowLoc"];
 	// otherwise it uses the frame in the nib
+	
+	NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:@"CreeveyToolbar"];
+	toolbar.delegate = self;
+	toolbar.displayMode = NSToolbarDisplayModeIconOnly;
+	self.window.toolbar = toolbar;
 	
 	NSUserDefaults *u = NSUserDefaults.standardUserDefaults;
 	NSSplitView *splitView = self.splitView;
@@ -791,6 +798,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 				[_fileWatcher stop];
 			});
 			[filenames removeAllObjects];
+			[displayedFilenames removeAllObjects];
 			[self clearImageCacheQueue];
 			ClearExifDateCache();
 			BOOL recurseSubfolders = self.wantsSubfolders;
@@ -810,16 +818,50 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
                             continue;
                         if ([appDelegate shouldShowFile:url]) {
                             NSString *aPath = url.path;
-                            if ([aPath containsString:@"::"]) {
-                                NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
+                            BOOL passesFilter = YES;
+                            if (self.searchString.length > 0) {
+                                NSArray *terms = [self.searchString componentsSeparatedByString:@" "];
+                                NSString *exifTags = [DYExiftags tagsForFile:aPath moreTags:YES];
+                                if (!exifTags) exifTags = @"";
+                                for (NSString *term in terms) {
+                                    if (term.length > 0 && [exifTags rangeOfString:term options:NSCaseInsensitiveSearch].location == NSNotFound) {
+                                        passesFilter = NO;
+                                        break;
+                                    }
+                                }
+                                if ([aPath.lastPathComponent isEqualToString:@"2026-08-24-095351__0.png"]) {
+                                    NSLog(@"[DIAGNOSTIC] Evaluating %@: searchString='%@', tags length=%lu, passesFilter=%d", aPath.lastPathComponent, self.searchString, (unsigned long)exifTags.length, passesFilter);
+                                    if (exifTags.length > 0) {
+                                        NSLog(@"[DIAGNOSTIC] tags prefix: %@", [exifTags substringToIndex:MIN(100, exifTags.length)]);
+                                    }
+                                }
                             }
-                            [filenames addObject:aPath];
-                            if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
-                                [filesForSlideshow addObject:aPath];
-                            if ((++i & 127) == 0)
-                                [self updateStatusOnMainThread:^NSString *{
-                                    return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i];
-                                }];
+                            if (passesFilter) {
+                                if ([aPath containsString:@"::"]) {
+                                    NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
+                                }
+                                [filenames addObject:aPath];
+                                if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
+                                    [filesForSlideshow addObject:aPath];
+                                
+                                if (self.searchString.length > 0) {
+                                    dispatch_async(dispatch_get_main_queue(), ^{
+                                        if (self->currCat == 0) {
+                                            if (![self->displayedFilenames containsObject:aPath]) {
+                                                [self->displayedFilenames addObject:aPath];
+                                                [self->imgMatrix addImage:nil withFilename:aPath];
+                                                [self->imgMatrix setNeedsDisplay:YES];
+                                            }
+                                        }
+                                        self.statusFld.stringValue = [NSString stringWithFormat:NSLocalizedString(@"Found %lu images...", @""), (unsigned long)self->displayedFilenames.count];
+                                    });
+                                } else {
+                                    if ((++i & 127) == 0)
+                                        [self updateStatusOnMainThread:^NSString *{
+                                            return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i];
+                                        }];
+                                }
+                            }
                         }
                         if (stopCaching) {
                             [filenames removeAllObjects]; // so it fails count > 0 test below
@@ -829,7 +871,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
                 }
             }
 		}
-		if (filenames.count) {
+		if (filenames.count && self.searchString.length == 0) {
 			[self updateStatusOnMainThread:^NSString *{
 				return [NSString stringWithFormat:NSLocalizedString(@"Sorting %lu filenames…", @""), filenames.count];
 			}];
@@ -849,7 +891,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 						[displayedFilenames addObject:path];
 				}
 			}
-		} else {
+		} else if (self.searchString.length == 0) {
 			[displayedFilenames setArray:filenames];
 		}
 		time(&matrixModTime);
@@ -861,6 +903,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 				[appDelegate performSelectorOnMainThread:@selector(slideshowFromAppOpen:) withObject:files waitUntilDone:NO]; // this must be called after displayedFilenames is sorted in case it calls back for indexOfFilename:
 			}
 		}
+		NSLog(@"[Debug] Filter finished. filenames.count = %lu, searchString = \"%@\"", (unsigned long)filenames.count, self.searchString);
 		filenamesDone = YES;
 		//NSLog(@"got %d files.", [filenames count]);
 	}
@@ -871,7 +914,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 
 		NSUInteger i = 0;
 		NSMutableIndexSet *selectedIndexes = [NSMutableIndexSet indexSet];
-		if (displayedFilenames.count > 0) {
+		if (displayedFilenames.count > 0 && self.searchString.length == 0) {
 			loadingDone = NO;
 			dispatch_async(dispatch_get_main_queue(), ^{
 				slidesBtn.enabled = YES;
@@ -1299,7 +1342,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	DYImageCache *thumbsCache = appDelegate.thumbsCache;
 	// Use unresolved filename for cache check to avoid blocking the main thread with FUSE getattrlist.
 	// For actual aliases, this will be a cache miss, but thumbLoader will resolve it asynchronously.
-	NSImage *thumb = [thumbsCache imageForKeyInvalidatingCacheIfNecessary:filename];
+	NSImage *thumb = [thumbsCache imageForKey:filename];
 	if (thumb) return thumb;
 	[imageCacheQueueLock lock];
 	[imageCacheQueue insertObject:[[DYMatrixFileInfo alloc] initWithPath:filename index:i] atIndex:0];
@@ -1346,8 +1389,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			DYMatrixFileInfo *d;
 			// discard any items in the queue that are no longer in the browser's directory.
 			// prioritize important files (the visible ones) by putting them in a higher-priority array.
-			if (!visibleQueue.count                   // nothing in the priority queue, so search for more items to add to it...
-				&& imageCacheQueue.count != lastCount // but skip this if nothing has been added to the queue
+			if (imageCacheQueue.count != lastCount // skip this if nothing has been added to the queue
 				)
 			{
 				i = imageCacheQueue.count;
@@ -1435,6 +1477,12 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			
 			if (!thumb)
 				thumb = _brokenDoc;
+			
+			// Throttle thumbnail loading to give the search loop network bandwidth
+			if (!filenamesDone && self.searchString.length > 0) {
+				[NSThread sleepForTimeInterval:0.5];
+			}
+			
 			dispatch_async(dispatch_get_main_queue(), ^{
 				if ([imgMatrix setImage:thumb atIndex:d->idx forFilename:origPath]) {
 					if (addedToCache) {
@@ -1458,5 +1506,48 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 								waitUntilDone:NO];
 	}
 }}
+
+#pragma mark - NSToolbarDelegate
+
+- (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {
+	return @[@"SearchItem", NSToolbarFlexibleSpaceItemIdentifier];
+}
+
+- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar {
+	return @[NSToolbarFlexibleSpaceItemIdentifier, @"SearchItem"];
+}
+
+- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag {
+	if ([itemIdentifier isEqualToString:@"SearchItem"]) {
+		NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:itemIdentifier];
+		if (!self.searchField) {
+			self.searchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(0, 0, 200, 22)];
+			self.searchField.target = self;
+			self.searchField.action = @selector(searchAction:);
+			self.searchField.sendsSearchStringImmediately = YES; // Search as you type!
+			self.searchField.sendsWholeSearchString = NO;
+		}
+		item.view = self.searchField;
+		item.minSize = NSMakeSize(100, 22);
+		item.maxSize = NSMakeSize(300, 22);
+		return item;
+	}
+	return nil;
+}
+
+- (void)searchAction:(NSSearchField *)sender {
+	NSLog(@"[Debug] searchAction: \"%@\"", sender.stringValue);
+	self.searchString = sender.stringValue;
+	NSLog(@"[DIAGNOSTIC] searchAction fired. searchString is now: '%@'", self.searchString);
+	stopCaching = 1;
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(startBackgroundSearch) object:nil];
+	[self performSelector:@selector(startBackgroundSearch) withObject:nil afterDelay:0.3]; // 300ms debounce
+}
+
+- (void)startBackgroundSearch {
+	NSLog(@"[DIAGNOSTIC] startBackgroundSearch detaching thread. searchString = '%@'", self.searchString);
+	NSArray *paths = self.path ? @[self.path] : @[];
+	[NSThread detachNewThreadSelector:@selector(loadImages:) toTarget:self withObject:paths];
+}
 
 @end

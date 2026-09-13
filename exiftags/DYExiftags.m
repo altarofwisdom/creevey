@@ -102,6 +102,42 @@ static void appendprops(NSMutableString *result, unsigned char *data, int len, B
 			appendprops(result, data, len, showMore);
 			free(data);
 		}
+	} else if ([extension isEqualToString:@"png"]) {
+		NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:aPath];
+		if (file) {
+			NSData *fileData = [file readDataOfLength:65536]; // Read first 64KB for INSTANT SMB access
+			[file closeFile];
+			if (fileData) {
+				const unsigned char *bytes = fileData.bytes;
+				NSUInteger len = fileData.length;
+				if (len > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+					NSUInteger offset = 8;
+					while (offset + 8 <= len) {
+						uint32_t chunkLen = (bytes[offset] << 24) | (bytes[offset+1] << 16) | (bytes[offset+2] << 8) | bytes[offset+3];
+						offset += 4;
+						char type[5] = { (char)bytes[offset], (char)bytes[offset+1], (char)bytes[offset+2], (char)bytes[offset+3], 0 };
+						offset += 4;
+						
+						if (strcmp(type, "tEXt") == 0 || strcmp(type, "iTXt") == 0) {
+							if (offset + chunkLen <= len) {
+								char *chunk = malloc(chunkLen);
+								if (chunk) {
+									memcpy(chunk, bytes + offset, chunkLen);
+									for (uint32_t j = 0; j < chunkLen; j++) {
+										if (chunk[j] == '\0') chunk[j] = ' ';
+									}
+									NSString *text = [[NSString alloc] initWithBytes:chunk length:chunkLen encoding:NSUTF8StringEncoding];
+									if (!text) text = [[NSString alloc] initWithBytes:chunk length:chunkLen encoding:NSASCIIStringEncoding];
+									if (text) { [result appendString:text]; [result appendString:@"\n"]; }
+									free(chunk);
+								}
+							}
+						}
+						offset += chunkLen + 4; // skip chunk data and CRC
+					}
+				}
+			}
+		}
 	} else if (IsHeif(extension)) {
 		FILE * f;
 		if ((f = fopen(aPath.fileSystemRepresentation, "rb")) == NULL) return nil;

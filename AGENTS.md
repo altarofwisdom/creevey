@@ -22,3 +22,6 @@
 
 3. **Utilisation de Git**
    N'utilisez pas de commandes `git` directement, sauf si c'est explicitement requis par l'utilisateur ou une compétence (skill). Utilisez les outils natifs quand c'est possible.
+
+4. **INTERDICTION DE CONTRÔLER L'APPLICATION**
+   Il est STRICTEMENT INTERDIT de piloter, contrôler ou automatiser l'utilisation de l'application via le terminal (par exemple avec AppleScript, `osascript`, des envois de frappes au clavier, ou en simulant des clics). Vous devez lancer l'application et laisser l'utilisateur la tester lui-même manuellement.

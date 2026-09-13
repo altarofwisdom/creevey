@@ -1,0 +1,1 @@
+sed -i '' -e '/@property (readonly) NSString \*currentResolvedPath;/a\'$'\n''@property (nonatomic, readonly) NSArray<NSString *> *selectedPaths;'$'\n' /Users/yoto/Projects/creevey/DirBrowserDelegate.h

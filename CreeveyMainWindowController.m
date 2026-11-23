@@ -205,6 +205,11 @@ typedef struct {
 @property (nonatomic, strong) NSString *recurseRoot;
 @property (nonatomic, strong) NSString *searchString;
 @property (nonatomic, strong) NSSearchField *searchField;
+@property (nonatomic, strong) NSString *scanStatusText;
+@property (nonatomic, assign) NSUInteger thumbProgressCount;
+@property (nonatomic, assign) BOOL isThumbLoading;
+@property (nonatomic, strong) NSArray *cachedDirectoryURLs;
+@property (nonatomic, strong) NSString *cachedDirectoryPath;
 @end
 
 @implementation CreeveyMainWindowController
@@ -520,6 +525,8 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	return result;
 }
 - (void)setWantsSubfolders:(BOOL)b {
+	self.cachedDirectoryPath = nil;
+	self.cachedDirectoryURLs = nil;
 	[_internalLock lock];
 	_wantsSubfolders = b;
 	_fileWatcher.wantsSubfolders = b;
@@ -533,6 +540,8 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 // or where "date added" changes without the user actually moving the file away and back into the folder,
 // nor do we handle the user changing a file modification date to *before* the previous value
 - (void)watcherFiles:(NSArray *)files deleted:(NSArray *)deleted {
+	self.cachedDirectoryPath = nil;
+	self.cachedDirectoryURLs = nil;
 	if (!filenamesDone || !loadingDone || filenames.count != imgMatrix.numCells) return;
 	short int sortType = abs(self.sortOrder);
 	BOOL sortByModTime = sortType == 2, sortBySize = sortType == 6;
@@ -569,6 +578,8 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 }
 
 - (void)watcherRootChanged:(NSURL *)fileRef {
+	self.cachedDirectoryPath = nil;
+	self.cachedDirectoryURLs = nil;
 	if (!filenamesDone) return;
 	[self removeAllPathsFromAccessedFilesArray];
 	[self clearImageCacheQueue];
@@ -697,10 +708,6 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 		}
 		[_accessedLock unlock];
 
-		if (!filenamesDone || !loadingDone) //[imgMatrix numCells] < [filenames count])
-			[NSThread detachNewThreadSelector:@selector(loadImages:)
-									 toTarget:self
-								   withObject:filenamesDone ? [dirBrowserDelegate selectedPaths] : nil];
 		// must check filenamesDone in case interrupted
 		[self updateStatusFld];
 		if (imgMatrix.numCells == 0)
@@ -724,26 +731,50 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 }
 
 - (void)updateStatusFld {
-	id s = NSLocalizedString(@"%u images", @"");
-	NSString *status = currCat
-		? [NSString stringWithFormat:@"%@: %@",
+	id s = NSLocalizedString(@"%lu images", @"");
+	NSString *status;
+	if (currCat) {
+		status = [NSString stringWithFormat:@"%@: %@",
 			[NSString stringWithFormat:NSLocalizedString(@"Group %i", @""), currCat],
-			[NSString stringWithFormat:s, displayedFilenames.count]]
-		: [NSString stringWithFormat:s, filenames.count];
+			[NSString stringWithFormat:s, (unsigned long)displayedFilenames.count]];
+	} else if (self.searchString.length > 0) {
+		status = [NSString stringWithFormat:NSLocalizedString(@"%lu images found", @""), (unsigned long)filenames.count];
+	} else {
+		status = [NSString stringWithFormat:s, (unsigned long)filenames.count];
+	}
 	[self updateStatusString:status];
 }
 
 - (void)updateStatusString:(NSString *)s {
 	_statusTime = NSDate.timeIntervalSinceReferenceDate;
-	statusFld.stringValue = s;
+	self.scanStatusText = s;
+	[self refreshStatusField];
 }
 
-- (void)updateStatusOnMainThread:(NSString * (^)(void))f {
+- (void)refreshStatusField {
+	if (self.isThumbLoading) {
+		NSUInteger total = MAX(self->imgMatrix.numCells, self->filenames.count);
+		if (self->currCat > 0) total = MAX(self->imgMatrix.numCells, self->displayedFilenames.count);
+		if (total >= 10) {
+			NSString *loadingMsg = NSLocalizedString(@"Loading %lu of %lu...", @"");
+			NSString *thumbStr = [NSString stringWithFormat:loadingMsg, (unsigned long)self.thumbProgressCount, (unsigned long)total];
+            if (self.scanStatusText.length > 0) {
+                statusFld.stringValue = [NSString stringWithFormat:@"%@ - %@", self.scanStatusText, thumbStr];
+            } else {
+                statusFld.stringValue = thumbStr;
+            }
+			return;
+		}
+	}
+	statusFld.stringValue = self.scanStatusText ?: @"";
+}
+
+- (void)updateStatusOnMainThread:(NSString * (^)(void))f isThumb:(BOOL)isThumb {
 	NSTimeInterval timeStamp = _statusTime = NSDate.timeIntervalSinceReferenceDate;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		if (_statusTime > timeStamp) return;
-		NSString *s = f();
-		if (s) statusFld.stringValue = s;
+		self.scanStatusText = f();
+		[self refreshStatusField];
 	});
 }
 
@@ -762,6 +793,51 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	}
 	[_accessedFiles removeAllObjects];
 	[_accessedLock unlock];
+}
+
+- (void)applyFilters {
+    [self clearImageCacheQueue];
+    [displayedFilenames removeAllObjects];
+    
+    NSString *search = self.searchString;
+    NSArray *terms = search.length > 0 ? [search componentsSeparatedByString:@" "] : nil;
+    
+    NSUInteger i = 0;
+    NSUInteger total = filenames.count;
+    
+    if (currCat == 1) currCat = 0; // reset category 1
+    
+    for (NSString *aPath in filenames) {
+        if (self.searchString != search) break; // aborted
+        
+        BOOL passesFilter = YES;
+        // 1. Category filter
+        if (currCat > 1) {
+            if (![appDelegate.cats[currCat-2] containsObject:aPath]) passesFilter = NO;
+        }
+        
+        // 2. Search filter
+        if (passesFilter && terms.count > 0) {
+            NSString *exifTags = [DYExiftags tagsForFile:aPath moreTags:YES];
+            if (!exifTags) exifTags = @"";
+            for (NSString *term in terms) {
+                if (term.length > 0 && [exifTags rangeOfString:term options:NSCaseInsensitiveSearch].location == NSNotFound) {
+                    passesFilter = NO;
+                    break;
+                }
+            }
+        }
+        
+        if (passesFilter) {
+            [displayedFilenames addObject:aPath];
+        }
+        
+        if (terms.count > 0 && (++i & 127) == 0) {
+            [self updateStatusOnMainThread:^NSString *{
+                return [NSString stringWithFormat:@"Filtering (%lu/%lu): %@", i, (unsigned long)total, [aPath lastPathComponent]];
+            } isThumb:NO];
+        }
+    }
 }
 
 #pragma mark load thread
@@ -805,62 +881,42 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
             NSLog(@"[CreeveyMainWindowController] loadImages: starting with %lu paths: %@", (unsigned long)pathsArray.count, pathsArray);
             for (NSString *thePath in pathsArray) {
                 if (stopCaching) break;
+                if (myThreadTime != self->lastThreadTime) break;
                 NSString *resolvedPath = ResolveAliasToPath(thePath);
                 NSLog(@"[CreeveyMainWindowController] Scanning directory: %@", resolvedPath);
-                id<NSFastEnumeration> e = CreeveyEnumerator(resolvedPath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
-                    [self updateStatusOnMainThread:^NSString *{
-                        return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
-                    }];
-                });
+                
+                NSArray *e = nil;
+                if ([self.cachedDirectoryPath isEqualToString:resolvedPath]) {
+                    e = self.cachedDirectoryURLs;
+                } else {
+                    e = (NSArray *)CreeveyEnumerator(resolvedPath, recurseSubfolders, (volatile char *)&stopCaching, ^(NSString *currentPath, NSUInteger fileCount) {
+                        [self updateStatusOnMainThread:^NSString *{
+                            return [NSString stringWithFormat:@"%@ (%lu): %@", loadingMsg, (unsigned long)fileCount, [currentPath lastPathComponent]];
+                        } isThumb:NO];
+                    });
+                    if (!stopCaching) {
+                        self.cachedDirectoryPath = resolvedPath;
+                        self.cachedDirectoryURLs = e;
+                    }
+                }
+                
                 for (NSURL *url in e) {
                     @autoreleasepool {
+                        if (myThreadTime != self->lastThreadTime) break;
                         if ([appDelegate handledDirectory:url subfolders:recurseSubfolders e:(id)e])
                             continue;
                         if ([appDelegate shouldShowFile:url]) {
                             NSString *aPath = url.path;
                             BOOL passesFilter = YES;
-                            if (self.searchString.length > 0) {
-                                NSArray *terms = [self.searchString componentsSeparatedByString:@" "];
-                                NSString *exifTags = [DYExiftags tagsForFile:aPath moreTags:YES];
-                                if (!exifTags) exifTags = @"";
-                                for (NSString *term in terms) {
-                                    if (term.length > 0 && [exifTags rangeOfString:term options:NSCaseInsensitiveSearch].location == NSNotFound) {
-                                        passesFilter = NO;
-                                        break;
-                                    }
-                                }
-                                if ([aPath.lastPathComponent isEqualToString:@"2026-08-24-095351__0.png"]) {
-                                    NSLog(@"[DIAGNOSTIC] Evaluating %@: searchString='%@', tags length=%lu, passesFilter=%d", aPath.lastPathComponent, self.searchString, (unsigned long)exifTags.length, passesFilter);
-                                    if (exifTags.length > 0) {
-                                        NSLog(@"[DIAGNOSTIC] tags prefix: %@", [exifTags substringToIndex:MIN(100, exifTags.length)]);
-                                    }
-                                }
-                            }
-                            if (passesFilter) {
-                                if ([aPath containsString:@"::"]) {
-                                    NSLog(@"[MainWindow] Added virtual file to matrix: %@", aPath);
-                                }
-                                [filenames addObject:aPath];
-                                if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
-                                    [filesForSlideshow addObject:aPath];
-                                
-                                if (self.searchString.length > 0) {
-                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                        if (self->currCat == 0) {
-                                            if (![self->displayedFilenames containsObject:aPath]) {
-                                                [self->displayedFilenames addObject:aPath];
-                                                [self->imgMatrix addImage:nil withFilename:aPath];
-                                                [self->imgMatrix setNeedsDisplay:YES];
-                                            }
-                                        }
-                                        self.statusFld.stringValue = [NSString stringWithFormat:NSLocalizedString(@"Found %lu images...", @""), (unsigned long)self->displayedFilenames.count];
-                                    });
-                                } else {
-                                    if ((++i & 127) == 0)
-                                        [self updateStatusOnMainThread:^NSString *{
-                                            return [NSString stringWithFormat:@"%@ (%lu)", loadingMsg, i];
-                                        }];
-                                }
+                            [filenames addObject:aPath];
+                            if (startSlideshowWhenReady && [filesBeingOpened containsObject:aPath])
+                                [filesForSlideshow addObject:aPath];
+                            
+                            if ((++i & 127) == 0) {
+                                [self updateStatusOnMainThread:^NSString *{
+                                    NSUInteger total = [(NSArray*)e count];
+                                    return [NSString stringWithFormat:@"%@ (%lu/%lu): %@", loadingMsg, i, (unsigned long)total, [aPath lastPathComponent]];
+                                } isThumb:NO];
                             }
                         }
                         if (stopCaching) {
@@ -871,29 +927,98 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
                 }
             }
 		}
-		if (filenames.count && self.searchString.length == 0) {
+		if (filenames.count) {
 			[self updateStatusOnMainThread:^NSString *{
 				return [NSString stringWithFormat:NSLocalizedString(@"Sorting %lu filenames…", @""), filenames.count];
-			}];
-			[filenames sortUsingComparator:self.comparator];
+			} isThumb:NO];
+			
+            short currentSort = self.sortOrder;
+            BOOL descending = currentSort < 0;
+            short absSort = descending ? -currentSort : currentSort;
+            
+            if (absSort == 2 || absSort == 4 || absSort == 6) {
+                NSUInteger count = filenames.count;
+                int64_t *vals = calloc(count, sizeof(int64_t));
+                NSArray *retainedFilenames = [filenames copy];
+                
+                static int statCount = 0;
+                statCount = 0;
+                
+                dispatch_apply(count, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
+                    NSString *path = retainedFilenames[i];
+                    NSString *realPath = path;
+                    NSRange sep = [path rangeOfString:@"::"];
+                    if (sep.location != NSNotFound) {
+                        realPath = [path substringToIndex:sep.location];
+                    }
+                    
+                    if (absSort == 2) { // Date Modified
+                        struct stat aBuf;
+                        if (stat(realPath.fileSystemRepresentation, &aBuf) == 0)
+                            vals[i] = aBuf.st_mtimespec.tv_sec;
+                    } else if (absSort == 6) { // File Size
+                        if (sep.location == NSNotFound) {
+                            struct stat aBuf;
+                            if (stat(realPath.fileSystemRepresentation, &aBuf) == 0)
+                                vals[i] = aBuf.st_size;
+                        }
+                    } else if (absSort == 4) { // Date Added
+                        struct attrlist attrList;
+                        memset(&attrList, 0, sizeof(attrList));
+                        attrList.bitmapcount = ATTR_BIT_MAP_COUNT;
+                        attrList.commonattr = ATTR_CMN_ADDEDTIME;
+                        struct { uint32_t length; struct timespec added_time; } attrBuf;
+                        if (getattrlist(realPath.fileSystemRepresentation, &attrList, &attrBuf, sizeof(attrBuf), 0) == 0) {
+                            vals[i] = attrBuf.added_time.tv_sec;
+                        } else {
+                            // Repli strict sur "Date Created" (st_birthtimespec) si "Date Added" échoue (ex: FUSE)
+                            struct stat aBuf;
+                            if (stat(realPath.fileSystemRepresentation, &aBuf) == 0) {
+                                vals[i] = aBuf.st_birthtimespec.tv_sec;
+                                // Protection ultime : si le lecteur ne gère pas du tout la date de création, on prend la date de modification
+                                if (vals[i] == 0) {
+                                    vals[i] = aBuf.st_mtimespec.tv_sec;
+                                }
+                            }
+                        }
+                    }
+                    
+                    int current = __atomic_fetch_add(&statCount, 1, __ATOMIC_RELAXED);
+                    if (current % 1024 == 0) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [self updateStatusString:[NSString stringWithFormat:@"Reading metadata %d/%lu…", current, (unsigned long)count]];
+                        });
+                    }
+                });
+                
+                NSMutableArray *items = [NSMutableArray arrayWithCapacity:count];
+                for (NSUInteger i = 0; i < count; i++) {
+                    [items addObject:@[ retainedFilenames[i], @(vals[i]) ]];
+                }
+                free(vals);
+                
+                [items sortWithOptions:NSSortConcurrent usingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+                    int64_t valA = [a[1] longLongValue];
+                    int64_t valB = [b[1] longLongValue];
+                    if (valA != valB) {
+                        if (descending) return valA < valB ? NSOrderedDescending : NSOrderedAscending;
+                        return valA > valB ? NSOrderedDescending : NSOrderedAscending;
+                    }
+                    if (descending) return [b[0] localizedStandardCompare:a[0]];
+                    return [a[0] localizedStandardCompare:b[0]];
+                }];
+                
+                [filenames removeAllObjects];
+                for (NSUInteger i = 0; i < count; i++) {
+                    [filenames addObject:items[i][0]];
+                }
+            } else {
+                [filenames sortUsingComparator:self.comparator];
+            }
 		}
-		if (currCat) { // currCat > 0 whenever cat changes (see keydown)
-			// this means deleting when a cat is displayed will cause unsightly flashing
-			// but we can live with that for now. maybe temp set currcat to 0?
-			[self clearImageCacheQueue];
-			[displayedFilenames removeAllObjects];
-			if (currCat == 1) {
-				currCat = 0;
-				[displayedFilenames addObjectsFromArray:filenames];
-			} else {
-				for (NSString *path in filenames) {
-					if ([appDelegate.cats[currCat-2] containsObject:path])
-						[displayedFilenames addObject:path];
-				}
-			}
-		} else if (self.searchString.length == 0) {
-			[displayedFilenames setArray:filenames];
-		}
+		
+		[self applyFilters];
+		
 		time(&matrixModTime);
 		if (startSlideshowWhenReady) {
 			startSlideshowWhenReady = NO;
@@ -905,6 +1030,7 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 		}
 		NSLog(@"[Debug] Filter finished. filenames.count = %lu, searchString = \"%@\"", (unsigned long)filenames.count, self.searchString);
 		filenamesDone = YES;
+		[self updateStatusOnMainThread:^NSString *{ return @""; } isThumb:NO];
 		//NSLog(@"got %d files.", [filenames count]);
 	}
 #pragma mark populate matrix
@@ -914,21 +1040,21 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 
 		NSUInteger i = 0;
 		NSMutableIndexSet *selectedIndexes = [NSMutableIndexSet indexSet];
-		if (displayedFilenames.count > 0 && self.searchString.length == 0) {
+		if (displayedFilenames.count > 0) {
 			loadingDone = NO;
 			dispatch_async(dispatch_get_main_queue(), ^{
 				slidesBtn.enabled = YES;
 			});
 			currentFilesDeletable = [NSFileManager.defaultManager isDeletableFileAtPath:displayedFilenames[0]];
 		
-			NSUInteger numFiles = displayedFilenames.count;
+
 			NSUInteger maxThumbs = [NSUserDefaults.standardUserDefaults
 									integerForKey:@"maxThumbsToLoad"];
 			BOOL isListView = self->imgMatrix.listViewMode;
 		
 			NSMutableArray *batchedImages = [NSMutableArray arrayWithCapacity:256];
 			NSMutableArray *batchedFilenames = [NSMutableArray arrayWithCapacity:256];
-			for (; i<numFiles; ++i) {
+			for (; i<displayedFilenames.count; ++i) {
 				if (stopCaching) {
 					//NSLog(@"aborted1 %@", origPath);
 					break;
@@ -1002,6 +1128,8 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 
 - (IBAction)displayDir:(id)sender {
 	stopCaching = 1;
+	self.cachedDirectoryPath = nil;
+	self.cachedDirectoryURLs = nil;
 	currentFilesDeletable = NO;
 	filenamesDone = NO;
 	currCat = 0;
@@ -1459,13 +1587,14 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			} else {
 				// we're rolling our own cancelPreviousPerformRequestsWithTarget here
 				// before updating the status field in the main thread, we check if anyone else has modified it (or dispatched a block to modify it) after the timeStamp
-				[self updateStatusOnMainThread:^NSString *{
-					if (imgMatrix.numCells == 0) return nil; // don't set status string if there are no thumbs (could happen if a file is in the queue when the path changes)
-					[_accessedLock lock];
-					NSUInteger k = _accessedFiles.count;
-					[_accessedLock unlock];
-					return [NSString stringWithFormat:loadingMsg, k+1, imgMatrix.numCells];
-				}];
+				[_accessedLock lock];
+				NSUInteger k = _accessedFiles.count;
+				[_accessedLock unlock];
+				dispatch_async(dispatch_get_main_queue(), ^{
+					self.thumbProgressCount = k + 1;
+					self.isThumbLoading = YES;
+					[self refreshStatusField];
+				});
 				addedToCache = [thumbsCache cacheFile:theFile fullSize:NO]; // will sleep if pending
 				thumb = [thumbsCache imageForKey:theFile];
 				if (thumb && !addedToCache) {
@@ -1500,10 +1629,14 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 			if (_background)
 				[NSThread sleepForTimeInterval:0.1];
 		}
-		if (!workToDo)
+		if (!workToDo) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				self.isThumbLoading = NO;
+			});
 			[self performSelectorOnMainThread:@selector(updateStatusFld)
 								   withObject:nil
 								waitUntilDone:NO];
+		}
 	}
 }}
 
@@ -1539,15 +1672,35 @@ NSComparator ComparatorForSortOrder(short sortOrder) {
 	NSLog(@"[Debug] searchAction: \"%@\"", sender.stringValue);
 	self.searchString = sender.stringValue;
 	NSLog(@"[DIAGNOSTIC] searchAction fired. searchString is now: '%@'", self.searchString);
-	stopCaching = 1;
+	// We no longer abort the background directory scan! 
+	// stopCaching = 1; 
 	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(startBackgroundSearch) object:nil];
 	[self performSelector:@selector(startBackgroundSearch) withObject:nil afterDelay:0.3]; // 300ms debounce
 }
 
+- (void)applyFiltersInBackground {
+    @autoreleasepool {
+        [self applyFilters];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->imgMatrix setNeedsDisplay:YES];
+            [self updateStatusFld];
+            
+            // Re-trigger thumbnail loading for the newly filtered matrix
+            if (self->filenamesDone) {
+                self->loadingDone = NO;
+                [NSThread detachNewThreadSelector:@selector(loadImages:) toTarget:self withObject:nil];
+            }
+        });
+    }
+}
+
 - (void)startBackgroundSearch {
 	NSLog(@"[DIAGNOSTIC] startBackgroundSearch detaching thread. searchString = '%@'", self.searchString);
-	NSArray *paths = self.path ? @[self.path] : @[];
-	[NSThread detachNewThreadSelector:@selector(loadImages:) toTarget:self withObject:paths];
+    if (!filenamesDone) {
+        // If the main scan is still running, it will automatically call applyFilters at the end.
+        return;
+    }
+	[NSThread detachNewThreadSelector:@selector(applyFiltersInBackground) toTarget:self withObject:nil];
 }
 
 @end

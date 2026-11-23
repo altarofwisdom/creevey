@@ -1850,7 +1850,8 @@ scheduledTimerWithTimeInterval:timerIntvl
 	NSMenuItem *item = sender;
 	BOOL b = !item.state;
 	item.state = b;
-	imgView.scalesUp = b;
+	for (DYImageView *v in mosaicViews)
+		v.scalesUp = b;
 	if (currentIndex >= filenames.count) return;
 	if (currentIndex != NSNotFound)
 		[self updateInfoFld];
@@ -2064,6 +2065,7 @@ scheduledTimerWithTimeInterval:timerIntvl
 		if (i >= mosaicViews.count) {
 			DYImageView *v = [[DYImageView alloc] initWithFrame:bestFrames[i]];
 			v.imageBackgroundColor = imgView.imageBackgroundColor;
+			v.scalesUp = imgView.scalesUp;
 			[self.contentView addSubview:v positioned:NSWindowBelow relativeTo:nil];
 			[mosaicViews addObject:v];
 		}

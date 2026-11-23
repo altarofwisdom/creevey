@@ -40,7 +40,7 @@
         snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
         
         if (ent->d_type == DT_DIR) {
-            if (strcmp(name, "Thumbs") == 0) continue; // skip Thumbs
+            if (strcmp(name, "Thumbs") == 0 || strcmp(name, "Trash") == 0) continue; // skip Thumbs and Trash
             if (recurse) {
                 [subdirs addObject:[NSString stringWithUTF8String:full_path]];
             }

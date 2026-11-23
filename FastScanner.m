@@ -8,11 +8,12 @@
 + (void)scanDirectory:(const char *)path recurse:(BOOL)recurse revealedDirectories:(NSSet<NSURL*>*)revealed group:(dispatch_group_t)group queue:(dispatch_queue_t)queue results:(NSMutableArray<NSURL *> *)results lock:(NSLock *)lock stop:(volatile char *)stopFlag progress:(void (^)(NSString *currentPath, NSUInteger))progress {
     if (stopFlag && *stopFlag) return;
     
+    NSString *pathStr = nil;
     if (progress) {
+        pathStr = [NSString stringWithUTF8String:path] ?: @"???";
         [lock lock];
         NSUInteger count = results.count;
         [lock unlock];
-        NSString *pathStr = [NSString stringWithUTF8String:path] ?: @"???";
         progress(pathStr, count);
     }
 
@@ -23,10 +24,19 @@
     NSMutableArray *localURLs = [NSMutableArray arrayWithCapacity:256];
     NSMutableArray *subdirs = recurse ? [NSMutableArray array] : nil;
     
+    int loopCount = 0;
     while ((ent = readdir(dir)) != NULL) {
         if (stopFlag && *stopFlag) break;
-        
         char *name = ent->d_name;
+        
+        if (progress && ((++loopCount) % 128 == 0)) {
+            [lock lock];
+            NSUInteger currentCount = results.count + localURLs.count;
+            [lock unlock];
+            NSString *fileName = [NSString stringWithUTF8String:name] ?: @"";
+            NSString *currentFileStr = [pathStr stringByAppendingPathComponent:fileName];
+            progress(currentFileStr, currentCount);
+        }
         if (name[0] == '.') {
             if (ent->d_type == DT_DIR) {
                 if (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) continue;
@@ -43,7 +53,7 @@
         snprintf(full_path, sizeof(full_path), "%s/%s", path, name);
         
         if (ent->d_type == DT_DIR) {
-            if (strcmp(name, "Thumbs") == 0) continue;
+            if (strcmp(name, "Thumbs") == 0 || strcmp(name, "Trash") == 0) continue;
             if (recurse) {
                 [subdirs addObject:[NSString stringWithUTF8String:full_path]];
             }

@@ -13,6 +13,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string.h>
 
 //#include "jpeglib.h"
@@ -92,7 +94,18 @@ static void appendprops(NSMutableString *result, unsigned char *data, int len, B
 
 @implementation DYExiftags
 
+static NSCache<NSString *, NSString *> *exifTagsCache = nil;
 + (NSString *)tagsForFile:(NSString *)aPath moreTags:(BOOL)showMore {
+	static dispatch_once_t onceToken;
+	dispatch_once(&onceToken, ^{
+		exifTagsCache = [[NSCache alloc] init];
+		exifTagsCache.totalCostLimit = 50 * 1024 * 1024; // 50MB limit
+	});
+
+	NSString *cacheKey = [NSString stringWithFormat:@"%@_%d", aPath, showMore];
+	NSString *cached = [exifTagsCache objectForKey:cacheKey];
+	if (cached) return cached;
+
 	NSMutableString *result = [NSMutableString stringWithCapacity:100];
 	NSString *extension = aPath.pathExtension.lowercaseString;
 	if (IsRaw(extension)) {
@@ -103,14 +116,15 @@ static void appendprops(NSMutableString *result, unsigned char *data, int len, B
 			free(data);
 		}
 	} else if ([extension isEqualToString:@"png"]) {
-		NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:aPath];
-		if (file) {
-			NSData *fileData = [file readDataOfLength:65536]; // Read first 64KB for INSTANT SMB access
-			[file closeFile];
-			if (fileData) {
-				const unsigned char *bytes = fileData.bytes;
-				NSUInteger len = fileData.length;
-				if (len > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+		int fd = open(aPath.fileSystemRepresentation, O_RDONLY | O_NONBLOCK);
+		if (fd != -1) {
+			unsigned char buffer[65536];
+			ssize_t bytesRead = read(fd, buffer, sizeof(buffer));
+			close(fd);
+			if (bytesRead > 8) {
+				const unsigned char *bytes = buffer;
+				NSUInteger len = bytesRead;
+				if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
 					NSUInteger offset = 8;
 					while (offset + 8 <= len) {
 						uint32_t chunkLen = (bytes[offset] << 24) | (bytes[offset+1] << 16) | (bytes[offset+2] << 8) | bytes[offset+3];
@@ -133,7 +147,7 @@ static void appendprops(NSMutableString *result, unsigned char *data, int len, B
 								}
 							}
 						}
-						offset += chunkLen + 4; // skip chunk data and CRC
+						offset += (NSUInteger)chunkLen + 4; // skip chunk data and CRC
 					}
 				}
 			}
@@ -196,7 +210,7 @@ static void appendprops(NSMutableString *result, unsigned char *data, int len, B
 		fclose(input_file);
 	}
 	[result insertString:@"\n" atIndex:0];
-	return result;
+	[exifTagsCache setObject:result forKey:cacheKey]; return result;
 }
 
 static unsigned short ExifOrientationForFile(FILE * f, BOOL isJpeg) {

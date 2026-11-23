@@ -1,37 +1,21 @@
 #import <Foundation/Foundation.h>
-#import <ImageIO/ImageIO.h>
-
-int main(int argc, const char * argv[]) {
+int main() {
     @autoreleasepool {
-        NSString *inPath = @"test_in.png";
-        NSString *outPath = @"test_out.png";
-        
-        // create a sample png
-        system("screencapture -x test_in.png");
-        
-        NSURL *url = [NSURL fileURLWithPath:inPath];
-        CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
-        if (source) {
-            CFStringRef type = CGImageSourceGetType(source);
-            NSMutableData *destData = [NSMutableData data];
-            CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)destData, type, 1, NULL);
-            if (destination) {
-                NSDictionary *metadata = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
-                NSMutableDictionary *mutableMetadata = [metadata mutableCopy];
-                mutableMetadata[(NSString *)kCGImagePropertyOrientation] = @(2);
-                
-                CGError err = kCGErrorSuccess;
-                CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef)mutableMetadata);
-                if (CGImageDestinationFinalize(destination)) {
-                    [destData writeToFile:outPath atomically:YES];
-                    NSLog(@"Success");
-                }
-                CFRelease(destination);
+        NSData *fileData = [NSData dataWithBytes:"\x89\x50\x4E\x47\x0D\x0A\x1A\x0A\x00\x00\x00\x00IEND\xAE\x42\x60\x82" length:16];
+        const unsigned char *bytes = fileData.bytes;
+        NSUInteger len = fileData.length;
+        if (len > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+            NSUInteger offset = 8;
+            while (offset + 8 <= len) {
+                uint32_t chunkLen = (bytes[offset] << 24) | (bytes[offset+1] << 16) | (bytes[offset+2] << 8) | bytes[offset+3];
+                offset += 4;
+                char type[5] = { (char)bytes[offset], (char)bytes[offset+1], (char)bytes[offset+2], (char)bytes[offset+3], 0 };
+                offset += 4;
+                NSLog(@"chunk %s, len %u, offset %lu", type, chunkLen, offset);
+                offset += chunkLen + 4;
+                NSLog(@"next offset %lu, len %lu", offset, len);
             }
-            CFRelease(source);
         }
-        
-        system("ls -l test_in.png test_out.png");
     }
     return 0;
 }

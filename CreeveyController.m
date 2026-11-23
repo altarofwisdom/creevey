@@ -5,6 +5,8 @@
 //a letter to Creative Commons, 559 Nathan Abbott Way, Stanford,
 //California 94305, USA.
 
+#include <unistd.h>
+#include <sys/stat.h>
 @import UniformTypeIdentifiers;
 #import "FastScanner.h"
 #import "CreeveyController.h"
@@ -711,6 +713,81 @@ static NSData * RestorePNGTextChunksData(NSData *sourceData, NSData *destData) {
 }
 
 
+- (NSURL *)trashDirectoryForURL:(NSURL *)url {
+	NSFileManager *fm = NSFileManager.defaultManager;
+	NSString *filePath = url.path;
+	NSString *startPath = filePath.stringByDeletingLastPathComponent;
+	
+	struct stat st_file;
+	if (stat(filePath.fileSystemRepresentation, &st_file) != 0) {
+		if (stat(startPath.fileSystemRepresentation, &st_file) != 0) {
+			return nil;
+		}
+	}
+	dev_t target_dev = st_file.st_dev;
+	
+	// Climb as high as possible in the folder hierarchy on the same mount
+	NSString *current = startPath;
+	NSString *highestWritable = nil;
+	if ([fm isWritableFileAtPath:current]) {
+		highestWritable = current;
+	}
+	
+	while (![current isEqualToString:@"/"]) {
+		NSString *parent = current.stringByDeletingLastPathComponent;
+		if (!parent.length || [parent isEqualToString:current]) {
+			break;
+		}
+		
+		struct stat st_parent;
+		if (stat(parent.fileSystemRepresentation, &st_parent) != 0) {
+			break;
+		}
+		
+		// Stop if parent is on a different mount / filesystem
+		if (st_parent.st_dev != target_dev) {
+			break;
+		}
+		
+		current = parent;
+		if ([fm isWritableFileAtPath:current]) {
+			highestWritable = current;
+		}
+	}
+	
+	if (!highestWritable) {
+		return nil;
+	}
+	
+	// In the highest writable folder on the same mount, find or create .trash / .Trash
+	NSString *dotTrashLower = [highestWritable stringByAppendingPathComponent:@".trash"];
+	NSString *dotTrashUpper = [highestWritable stringByAppendingPathComponent:@".Trash"];
+	
+	BOOL isDir = NO;
+	if ([fm fileExistsAtPath:dotTrashLower isDirectory:&isDir] && isDir && [fm isWritableFileAtPath:dotTrashLower]) {
+		return [NSURL fileURLWithPath:dotTrashLower isDirectory:YES];
+	}
+	if ([fm fileExistsAtPath:dotTrashUpper isDirectory:&isDir] && isDir && [fm isWritableFileAtPath:dotTrashUpper]) {
+		return [NSURL fileURLWithPath:dotTrashUpper isDirectory:YES];
+	}
+	
+	// Neither exists yet: create .trash
+	NSURL *trashURL = [NSURL fileURLWithPath:dotTrashLower isDirectory:YES];
+	if ([fm createDirectoryAtURL:trashURL withIntermediateDirectories:YES attributes:nil error:nil] &&
+	    [fm isWritableFileAtPath:trashURL.path]) {
+		return trashURL;
+	}
+	
+	// Fallback attempt: create .Trash
+	trashURL = [NSURL fileURLWithPath:dotTrashUpper isDirectory:YES];
+	if ([fm createDirectoryAtURL:trashURL withIntermediateDirectories:YES attributes:nil error:nil] &&
+	    [fm isWritableFileAtPath:trashURL.path]) {
+		return trashURL;
+	}
+	
+	return nil;
+}
+
 // returns 1 if successful
 // unsuccessful: 0 user wants to continue; 2 cancel/abort
 - (char)trashFile:(NSString *)fullpath numLeft:(NSUInteger)numFiles resultingURL:(NSURL **)newURL {
@@ -720,14 +797,36 @@ static NSData * RestorePNGTextChunksData(NSData *sourceData, NSData *destData) {
 	if (!error)
 		return 1;
 		
-	// Fallback to local .Trash directory if system trash fails
-	NSURL *parentURL = [url URLByDeletingLastPathComponent];
-	NSURL *trashURL = [parentURL URLByAppendingPathComponent:@".Trash"];
-	[NSFileManager.defaultManager createDirectoryAtURL:trashURL withIntermediateDirectories:YES attributes:nil error:nil];
-	NSURL *destURL = [trashURL URLByAppendingPathComponent:url.lastPathComponent];
-	if ([NSFileManager.defaultManager moveItemAtURL:url toURL:destURL error:nil]) {
-		if (newURL) *newURL = destURL;
-		return 1;
+	// Fallback to volume or local trash directory if system trash fails
+	NSURL *trashURL = [self trashDirectoryForURL:url];
+	if (trashURL) {
+		NSString *filename = url.lastPathComponent;
+		NSString *stem = filename.stringByDeletingPathExtension;
+		NSString *ext = filename.pathExtension;
+		NSURL *destURL = [trashURL URLByAppendingPathComponent:filename];
+		NSError *moveError = nil;
+		NSUInteger counter = 1;
+		
+		while (counter <= 1000) {
+			if (![NSFileManager.defaultManager fileExistsAtPath:destURL.path]) {
+				if ([NSFileManager.defaultManager moveItemAtURL:url toURL:destURL error:&moveError]) {
+					if (newURL) *newURL = destURL;
+					return 1;
+				}
+				// If move failed because destination already exists (race condition), continue loop
+				if (![moveError.domain isEqualToString:NSCocoaErrorDomain] || moveError.code != NSFileWriteFileExistsError) {
+					break;
+				}
+			}
+			counter++;
+			NSString *newName = ext.length > 0
+				? [NSString stringWithFormat:@"%@ %lu.%@", stem, (unsigned long)counter, ext]
+				: [NSString stringWithFormat:@"%@ %lu", stem, (unsigned long)counter];
+			destURL = [trashURL URLByAppendingPathComponent:newName];
+		}
+		if (moveError) {
+			error = moveError;
+		}
 	}
 	
 	NSAlert *alert = [[NSAlert alloc] init];
@@ -1628,7 +1727,7 @@ id<NSFastEnumeration> CreeveyEnumerator(NSString *path, BOOL recurseSubfolders, 
 - (BOOL)handledDirectory:(NSURL *)url subfolders:(BOOL)recurse e:(id)e {
 	NSNumber * __autoreleasing val;
 	if (url.hasDirectoryPath) {
-		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"] || [url.lastPathComponent isEqualToString:@".Trash"])) {
+		if (recurse && ((IS_URL_HIDDEN && ![_revealedDirectories containsObject:url]) || [url.lastPathComponent isEqualToString:@"Thumbs"] || [url.lastPathComponent isEqualToString:@".Trash"] || [url.lastPathComponent isEqualToString:@".trash"] || [url.lastPathComponent isEqualToString:@"Trash"])) {
 			if ([e respondsToSelector:@selector(skipDescendants)]) {
 				[e skipDescendants];
 			}
